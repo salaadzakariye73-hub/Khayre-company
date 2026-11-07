@@ -9,7 +9,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
-const PUBLIC_DIR = path.join(__dirname, 'public');
+const PUBLIC_DIR = __dirname;
 const DATA_FILE = path.join(__dirname, 'data', 'db.json');
 const MONGO_URI = process.env.MONGODB_URI;
 const MONGO_DB = process.env.MONGODB_DB || 'dhismaha';
