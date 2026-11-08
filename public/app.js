@@ -8,7 +8,7 @@ const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦' },
   { id: 'invoices', label: 'Invoice-yada', icon: '🧾' },
   { id: 'receivables', label: 'Lacag qabasho', icon: '⏳' },
-  { id: 'payments', label: 'Lacag dhigasho', icon: '💵' },
+  { id: 'payouts', label: 'Lacag bixin', icon: '💵' },
   { id: 'customers', label: 'Macaamiil', icon: '👥' },
   { id: 'items', label: 'Alaabta', icon: '🧱' },
   { id: 'expenses', label: 'Kharash', icon: '💸' },
@@ -176,7 +176,7 @@ const VIEWS = {
   dashboard: viewDashboard,
   invoices: viewInvoices,
   receivables: viewReceivables,
-  payments: viewPayments,
+  payouts: viewPayouts,
   customers: viewCustomers,
   items: viewItems,
   expenses: viewExpenses,
@@ -340,6 +340,32 @@ function openInvoiceForm(customers, items) {
   };
 }
 
+// Invoice-ka bog cusub ayaa lagu daabacaa (browser-ka desktop-ka iyo telefoonka way shaqeeyaan)
+function printInvoice() {
+  const area = document.querySelector('#printArea');
+  if (!area) return;
+  const w = window.open('', '_blank', 'width=900,height=700');
+  if (!w) return toast('Popup-ka browser-ka xidhay. Ogolow popup si aad u daabacdo', 'bad');
+  w.document.write(`<!doctype html><html lang="so"><head><meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Invoice</title>
+  <style>
+    body { font-family: "Segoe UI", system-ui, Arial, sans-serif; color: #000; background: #fff; margin: 24px; font-size: 14px; }
+    h2, h3, h4 { margin: 0 0 10px; }
+    small { color: #444; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px; border-bottom: 1px solid #bbb; text-align: left; }
+    .r { text-align: right; }
+    .inv-head { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 10px; }
+    .totals { display: flex; justify-content: flex-end; gap: 18px; flex-wrap: wrap; margin-top: 14px; }
+    .list-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #bbb; }
+    .good, .bad { color: #000; }
+    @page { margin: 14mm; }
+  </style></head><body>${area.innerHTML}</body></html>`);
+  w.document.close();
+  w.onload = () => { w.focus(); w.print(); };
+}
+
 async function openInvoice(id) {
   let inv;
   try { inv = await api('GET', '/api/invoices/' + id); }
@@ -376,7 +402,7 @@ async function openInvoice(id) {
         : '<p class="muted">Weli lacag ma bixin.</p>'}
     </div>`);
 
-  $('#printBtn').onclick = () => window.print();
+  $('#printBtn').onclick = printInvoice;
   if ($('#payBtn')) $('#payBtn').onclick = () => openPaymentForm(inv.id);
   $('#delInv').onclick = () => {
     if (confirm('Invoice-kan ma tirtirtaa? Alaabta stock-keeda waa la soo celinayaa.')) {
@@ -385,14 +411,34 @@ async function openInvoice(id) {
   };
 }
 
-// ---------- Lacag qabasho (baaqa macaamiisha) ----------
+// ---------- Lacag qabasho (lacagta macaamiilka ka timaadda) ----------
+function receiptsTable(list) {
+  if (!list.length) return '<p class="muted">Lacag ma jirto.</p>';
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Taariikh</th><th>Macmiil</th><th>Invoice</th><th>Nooca</th><th>Fiiro</th><th class="r">Lacag</th><th></th></tr></thead>
+    <tbody>${list.map(p => `<tr>
+      <td>${p.date}</td>
+      <td>${esc(p.customerName)}</td>
+      <td>${esc(p.invoiceNo)}</td>
+      <td>${p.kind === 'akoon' ? 'Akoon' : 'Lacag cusub'}</td>
+      <td>${esc(p.note)}</td>
+      <td class="r good">${money(p.amount)}</td>
+      <td><button class="link danger del" data-id="${p.id}">✕</button></td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
 async function viewReceivables(el) {
-  const { invoices } = await api('GET', '/api/invoices');
+  const [{ invoices }, { payments }, { customers }] = await Promise.all([
+    api('GET', '/api/invoices'),
+    api('GET', '/api/payments'),
+    api('GET', '/api/customers')
+  ]);
   const open = invoices.filter(i => i.remaining > 0);
   const total = sumOf(open, i => i.remaining);
   el.innerHTML = `
   <header class="page-head">
     <div><h2>Lacag qabasho</h2><p class="muted">Macaamiisha lacagta weli ku leh: <b class="bad">${money(total)}</b></p></div>
+    <button class="btn primary" id="newRec" ${customers.length ? '' : 'disabled'}>+ Lacag qabasho</button>
   </header>
   <section class="card">${open.length
     ? `<div class="table-wrap"><table>
@@ -406,96 +452,215 @@ async function viewReceivables(el) {
         </tr>`).join('')}</tbody>
       </table></div>`
     : '<p class="muted">Baaqi ma jiro. ✅</p>'}
-  </section>`;
+  </section>
+  <section class="card"><h3>Lacag qabashada</h3>${receiptsTable(payments)}</section>`;
+  $('#newRec').onclick = () => openPaymentForm();
   el.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => openPaymentForm(b.dataset.pay));
-}
-
-// ---------- Lacag dhigasho (lacagta la helay) ----------
-async function viewPayments(el) {
-  const { payments } = await api('GET', '/api/payments');
-  el.innerHTML = `
-  <header class="page-head">
-    <div><h2>Lacag dhigasho</h2><p class="muted">Lacagta macaamiisha ka timid</p></div>
-    <button class="btn primary" id="newPay">+ Lacag cusub</button>
-  </header>
-  <section class="card"><div class="table-wrap"><table>
-    <thead><tr><th>Taariikh</th><th>Macmiil</th><th>Invoice</th><th>Fiiro</th><th class="r">Lacag</th><th></th></tr></thead>
-    <tbody>${payments.map(p => `<tr>
-      <td>${p.date}</td>
-      <td>${esc(p.customerName)}</td>
-      <td>${esc(p.invoiceNo)}</td>
-      <td>${esc(p.note)}</td>
-      <td class="r good">${money(p.amount)}</td>
-      <td><button class="link danger del" data-id="${p.id}">✕</button></td>
-    </tr>`).join('') || '<tr><td colspan="6" class="muted">Lacag ma jirto.</td></tr>'}</tbody>
-  </table></div></section>`;
-  $('#newPay').onclick = () => openPaymentForm();
   bindDel(el, '/api/payments/', 'Lacagta waa la tirtiray');
 }
 
-async function openPaymentForm(preselectId) {
-  let open;
+async function openPaymentForm(preInvoiceId) {
+  let invoices, customers;
   try {
-    const { invoices } = await api('GET', '/api/invoices');
-    open = invoices.filter(i => i.remaining > 0);
+    ({ invoices } = await api('GET', '/api/invoices'));
+    ({ customers } = await api('GET', '/api/customers'));
   } catch (e) { return toast(e.message, 'bad'); }
-  if (!open.length) return toast('Invoice baaqi leh ma jiro', 'bad');
+  if (!customers.length) return toast('Marka hore macaamiil ku dar', 'bad');
+  const pre = invoices.find(i => i.id === preInvoiceId);
+  const preCust = pre ? pre.customerId : customers[0].id;
   const o = openModal(`
-    <div class="modal-head"><h3>Lacag dhigasho</h3><button class="link" data-close>✕</button></div>
+    <div class="modal-head"><h3>Lacag qabasho</h3><button class="link" data-close>✕</button></div>
     <form id="payForm" class="form">
-      <select name="invoiceId" required>${open.map(i => `<option value="${i.id}" ${i.id === preselectId ? 'selected' : ''}>${esc(i.no)} · ${esc(i.customerName)} · baaqi ${money(i.remaining)}</option>`).join('')}</select>
+      <select name="customerId" required>${customers.map(c => `<option value="${c.id}" ${c.id === preCust ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <select name="invoiceId"></select>
+      <select name="source">
+        <option value="cash">Lacag cusub (cash)</option>
+        <option value="akoon">Akoonka macaamiilka</option>
+      </select>
       <input name="amount" type="number" step="0.01" min="0.01" placeholder="Lacagta $" required>
       <input name="date" type="date" value="${todayStr()}" required>
       <input name="note" placeholder="Fiiro (ikhtiyaari)">
+      <p class="muted" id="payHint"></p>
       <button class="btn primary block">Kaydi lacagta</button>
     </form>`);
-  const sel = o.querySelector('[name=invoiceId]');
+  const cust = o.querySelector('[name=customerId]');
+  const invSel = o.querySelector('[name=invoiceId]');
+  const src = o.querySelector('[name=source]');
   const amt = o.querySelector('[name=amount]');
-  const setAmount = () => {
-    const inv = open.find(i => i.id === sel.value);
-    if (!inv) return;
-    amt.max = inv.remaining;
-    amt.value = inv.remaining.toFixed(2);
+  const hint = o.querySelector('#payHint');
+
+  const syncInvoice = () => {
+    const inv = invoices.find(i => i.id === invSel.value);
+    const c = customers.find(x => x.id === cust.value);
+    src.style.display = inv ? '' : 'none';
+    if (inv) {
+      amt.max = inv.remaining;
+      amt.value = inv.remaining.toFixed(2);
+      hint.textContent = `Baaqi: ${money(inv.remaining)} · Akoon: ${money(c.akoon)}`;
+    } else {
+      amt.removeAttribute('max');
+      hint.textContent = 'Lacagtan waxay u gelaysaa akoonka macaamiilka.';
+    }
   };
-  sel.onchange = setAmount;
-  setAmount();
+  const fillInvoices = () => {
+    const list = invoices.filter(i => i.customerId === cust.value && i.remaining > 0);
+    invSel.innerHTML = `<option value="">— Invoice la'aan (akoon) —</option>` + list.map(i =>
+      `<option value="${i.id}" ${i.id === preInvoiceId ? 'selected' : ''}>${esc(i.no)} · baaqi ${money(i.remaining)}</option>`).join('');
+    syncInvoice();
+  };
+  cust.onchange = fillInvoices;
+  invSel.onchange = syncInvoice;
+  fillInvoices();
+
   o.querySelector('#payForm').onsubmit = e => {
     e.preventDefault();
     const d = formData(e.target);
-    act(() => api('POST', '/api/payments', { ...d, amount: Number(d.amount) }), 'Lacagta waa la diiwaangeliyay');
+    const body = {
+      customerId: d.customerId,
+      invoiceId: d.invoiceId || '',
+      source: d.invoiceId ? d.source : 'cash',
+      amount: Number(d.amount),
+      date: d.date,
+      note: d.note || ''
+    };
+    act(() => api('POST', '/api/payments', body), 'Lacagta waa la diiwaangeliyay');
   };
 }
 
-// ---------- Macaamiil ----------
+// ---------- Lacag bixin (macaamiilka akoonkiisa ka qaadanaya) ----------
+function payoutsTable(list) {
+  if (!list.length) return '<p class="muted">Lacag bixin ma jirto.</p>';
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Taariikh</th><th>Macmiil</th><th>Nooca</th><th>Fiiro</th><th class="r">Lacag</th><th></th></tr></thead>
+    <tbody>${list.map(p => `<tr>
+      <td>${p.date}</td>
+      <td>${esc(p.customerName)}</td>
+      <td>${p.customerType === 'milkiile' ? 'Milkiile' : 'Macaamiil'}</td>
+      <td>${esc(p.note)}</td>
+      <td class="r bad">${money(p.amount)}</td>
+      <td><button class="link danger del" data-id="${p.id}">✕</button></td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+async function viewPayouts(el) {
+  const [{ payouts }, { customers }] = await Promise.all([
+    api('GET', '/api/payouts'),
+    api('GET', '/api/customers')
+  ]);
+  el.innerHTML = `
+  <header class="page-head">
+    <div><h2>Lacag bixin</h2><p class="muted">Lacagta macaamiilka ama milkiilaha ka qaadanaya akoonkooda</p></div>
+    <button class="btn primary" id="newPout" ${customers.length ? '' : 'disabled'}>+ Lacag bixin</button>
+  </header>
+  <section class="card">${payoutsTable(payouts)}</section>`;
+  $('#newPout').onclick = () => openPayoutForm(customers);
+  bindDel(el, '/api/payouts/', 'Lacag bixinta waa la tirtiray');
+}
+
+function openPayoutForm(customers) {
+  const o = openModal(`
+    <div class="modal-head"><h3>Lacag bixin</h3><button class="link" data-close>✕</button></div>
+    <form id="poutForm" class="form">
+      <select name="customerId" required>${customers.map(c => `<option value="${c.id}">${esc(c.name)} · akoon ${money(c.akoon)}</option>`).join('')}</select>
+      <input name="amount" type="number" step="0.01" min="0.01" placeholder="Lacagta $" required>
+      <input name="date" type="date" value="${todayStr()}" required>
+      <input name="note" placeholder="Fiiro (ikhtiyaari)">
+      <p class="muted" id="poutHint"></p>
+      <button class="btn primary block">Kaydi lacagta</button>
+    </form>`);
+  const sel = o.querySelector('[name=customerId]');
+  const hint = o.querySelector('#poutHint');
+  const updateHint = () => {
+    const c = customers.find(x => x.id === sel.value);
+    if (!c) return;
+    const needG = c.type !== 'milkiile' && !(c.guarantor && c.guarantor.name && c.guarantor.phone && c.guarantor.address);
+    hint.textContent = needG ? 'Macaamiilkan damiin ma leh: amaah looma oggola ilaa damiin la diiwaangeliyo.' : '';
+  };
+  sel.onchange = updateHint;
+  updateHint();
+  o.querySelector('#poutForm').onsubmit = e => {
+    e.preventDefault();
+    const d = formData(e.target);
+    act(() => api('POST', '/api/payouts', { customerId: d.customerId, amount: Number(d.amount), date: d.date, note: d.note || '' }),
+      'Lacagta waa la bixiyay');
+  };
+}
+
+// ---------- Macaamiil (iyo milkiilayaasha) ----------
+const customerBody = d => ({
+  name: d.name,
+  type: d.type,
+  phone: d.phone || '',
+  address: d.address || '',
+  guarantor: { name: d.gName || '', phone: d.gPhone || '', address: d.gAddress || '' }
+});
+
 async function viewCustomers(el) {
   const { customers } = await api('GET', '/api/customers');
   el.innerHTML = `
   <header class="page-head">
-    <div><h2>Macaamiil</h2><p class="muted">Macaamiil kasta iyo baaqigiisa</p></div>
+    <div><h2>Macaamiil</h2><p class="muted">Macaamiil iyo milkiilayaasha, baaqigooda iyo akoonkooda</p></div>
   </header>
   <div class="grid-2">
     <form id="custForm" class="card form">
       <h3>Macmiil cusub</h3>
       <input name="name" placeholder="Magaca" required>
+      <select name="type">
+        <option value="macaamiil">Macaamiil</option>
+        <option value="milkiile">Milkiile (milkiilaha shirkada)</option>
+      </select>
       <input name="phone" placeholder="Telefoon">
       <input name="address" placeholder="Cinwaan / goob">
+      <h4 style="margin-top:6px">Damiin (amaah qaadanaya)</h4>
+      <input name="gName" placeholder="Magaca damiinka">
+      <input name="gPhone" placeholder="Telefoonka damiinka">
+      <input name="gAddress" placeholder="Goobta damiinka">
       <button class="btn primary">Kaydi</button>
     </form>
     <div class="card"><div class="table-wrap"><table>
-      <thead><tr><th>Magaca</th><th class="r">Wadar</th><th class="r">Baaqi</th><th></th></tr></thead>
+      <thead><tr><th>Magaca</th><th class="r">Baaqi</th><th class="r">Akoon</th><th></th></tr></thead>
       <tbody>${customers.map(c => `<tr>
-        <td>${esc(c.name)}<small class="block">${esc(c.phone)} ${esc(c.address)}</small></td>
-        <td class="r">${money(c.total)}</td>
+        <td>${esc(c.name)} ${c.type === 'milkiile' ? '<small>(milkiile)</small>' : ''}<small class="block">${esc(c.phone)} ${esc(c.address)}</small></td>
         <td class="r ${c.balance > 0 ? 'bad' : 'good'}">${money(c.balance)}</td>
-        <td><button class="link danger del" data-id="${c.id}" ${c.invoices ? 'disabled' : ''}>✕</button></td>
+        <td class="r ${c.akoon < 0 ? 'bad' : 'good'}">${c.akoon < 0 ? 'Amaah ' + money(-c.akoon) : money(c.akoon)}</td>
+        <td>
+          <button class="link" data-edit="${c.id}">Wax ka beddel</button>
+          <button class="link danger del" data-id="${c.id}" ${c.invoices ? 'disabled' : ''}>✕</button>
+        </td>
       </tr>`).join('') || '<tr><td colspan="4" class="muted">Macmiil ma jiro.</td></tr>'}</tbody>
     </table></div></div>
   </div>`;
   $('#custForm').onsubmit = e => {
     e.preventDefault();
-    act(() => api('POST', '/api/customers', formData(e.target)), 'Macmiilka waa la kaydiyay');
+    act(() => api('POST', '/api/customers', customerBody(formData(e.target))), 'Macmiilka waa la kaydiyay');
   };
+  el.querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
+    openCustomerEdit(customers.find(c => c.id === b.dataset.edit)));
   bindDel(el, '/api/customers/', 'Macmiilka waa la tirtiray');
+}
+
+function openCustomerEdit(c) {
+  const g = c.guarantor || {};
+  const o = openModal(`
+    <div class="modal-head"><h3>Wax ka beddel: ${esc(c.name)}</h3><button class="link" data-close>✕</button></div>
+    <form id="custEdit" class="form">
+      <input name="name" value="${esc(c.name)}" required>
+      <select name="type">
+        <option value="macaamiil" ${c.type !== 'milkiile' ? 'selected' : ''}>Macaamiil</option>
+        <option value="milkiile" ${c.type === 'milkiile' ? 'selected' : ''}>Milkiile</option>
+      </select>
+      <input name="phone" value="${esc(c.phone)}" placeholder="Telefoon">
+      <input name="address" value="${esc(c.address)}" placeholder="Cinwaan / goob">
+      <h4 style="margin-top:6px">Damiin</h4>
+      <input name="gName" value="${esc(g.name || '')}" placeholder="Magaca damiinka">
+      <input name="gPhone" value="${esc(g.phone || '')}" placeholder="Telefoonka damiinka">
+      <input name="gAddress" value="${esc(g.address || '')}" placeholder="Goobta damiinka">
+      <button class="btn primary block">Kaydi isbeddelka</button>
+    </form>`);
+  o.querySelector('#custEdit').onsubmit = e => {
+    e.preventDefault();
+    act(() => api('PUT', '/api/customers/' + c.id, customerBody(formData(e.target))), 'Macmiilka waa la cusboonaysiiyay');
+  };
 }
 
 // ---------- Alaabta ----------
