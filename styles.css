@@ -45,7 +45,7 @@ small { color: var(--muted); font-size: 12px; }
 #authForm, .form { display: grid; gap: 10px; text-align: left; }
 
 /* ---------- Shell ---------- */
-.shell { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+.shell { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100vh; }
 .sidebar {
   background: var(--side); padding: 22px 14px; display: flex; flex-direction: column; gap: 18px;
   position: sticky; top: 0; height: 100vh; border-right: 1px solid var(--line);
@@ -187,7 +187,7 @@ th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: v
 
 /* ---------- Mobile ---------- */
 @media (max-width: 900px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: static; height: auto; padding: 14px; gap: 10px; }
   .sidebar nav { flex-direction: row; overflow-x: auto; padding-bottom: 4px; }
   .nav-btn { white-space: nowrap; padding: 9px 12px; }
