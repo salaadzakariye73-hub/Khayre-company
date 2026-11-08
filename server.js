@@ -21,7 +21,7 @@ let db = null;
 
 const emptyDb = () => ({
   users: [], sessions: {}, customers: [], items: [],
-  invoices: [], payments: [], expenses: [], counters: { invoice: 0 }
+  invoices: [], payments: [], payouts: [], creditUses: [], expenses: [], counters: { invoice: 0 }
 });
 
 function loadFile() {
@@ -149,7 +149,16 @@ function requireAdmin(req) {
 }
 
 // ---------------------------------------------------------------- Views (xisaab)
-const paidFor = invId => sum(db.payments.filter(p => p.invoiceId === invId).map(p => p.amount));
+const paidFor = invId => sum([
+  ...db.payments.filter(p => p.invoiceId === invId).map(p => p.amount),
+  ...db.creditUses.filter(c => c.invoiceId === invId).map(c => c.amount)
+]);
+// Akoonka macaamiilka = lacag cusub oo akoon ah − lacagta la qaaday − akoonka loo isticmaalay invoice
+const akoonOf = custId => round2(
+  sum(db.payments.filter(p => p.customerId === custId && !p.invoiceId).map(p => p.amount))
+  - sum(db.payouts.filter(p => p.customerId === custId).map(p => p.amount))
+  - sum(db.creditUses.filter(c => c.customerId === custId).map(c => c.amount))
+);
 const custName = id => (db.customers.find(c => c.id === id) || {}).name || '—';
 
 function invView(inv) {
@@ -160,11 +169,25 @@ function invView(inv) {
     status: remaining <= 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
   };
 }
+const custType = v => (v === 'milkiile' ? 'milkiile' : 'macaamiil');
+function guarantorOf(g) {
+  if (!g || typeof g !== 'object') return null;
+  const name = str(g.name, 'Magaca damiinka', 80, false);
+  const phone = str(g.phone, 'Telefoonka damiinka', 30, false);
+  const address = str(g.address, 'Goobta damiinka', 160, false);
+  if (!name && !phone && !address) return null;
+  if (!name || !phone || !address) fail(400, 'Damiinka magaca, telefoonka iyo goobta oo dhan waa in la buuxiyo');
+  return { name, phone, address };
+}
+const hasGuarantor = g => !!(g && g.name && g.phone && g.address);
 function custView(c) {
   const invs = db.invoices.filter(i => i.customerId === c.id);
   const total = sum(invs.map(i => i.total));
   const paid = sum(invs.map(i => paidFor(i.id)));
-  return { ...c, invoices: invs.length, total, paid, balance: round2(total - paid) };
+  return {
+    ...c, type: custType(c.type), guarantor: c.guarantor || null,
+    invoices: invs.length, total, paid, balance: round2(total - paid), akoon: akoonOf(c.id)
+  };
 }
 
 // ---------------------------------------------------------------- Router
@@ -227,6 +250,8 @@ route('POST', '/api/customers', async ({ req, body }) => {
     name: str(body.name, 'Magaca', 80),
     phone: str(body.phone, 'Telefoonka', 30, false),
     address: str(body.address, 'Cinwaanka', 160, false),
+    type: custType(body.type),
+    guarantor: guarantorOf(body.guarantor),
     createdAt: nowIso()
   };
   db.customers.push(c);
@@ -239,6 +264,8 @@ route('PUT', '/api/customers/:id', async ({ req, body, params }) => {
   if (body.name !== undefined) c.name = str(body.name, 'Magaca', 80);
   if (body.phone !== undefined) c.phone = str(body.phone, 'Telefoonka', 30, false);
   if (body.address !== undefined) c.address = str(body.address, 'Cinwaanka', 160, false);
+  if (body.type !== undefined) c.type = custType(body.type);
+  if (body.guarantor !== undefined) c.guarantor = guarantorOf(body.guarantor);
   return { body: { customer: custView(c) } };
 });
 
@@ -247,6 +274,10 @@ route('DELETE', '/api/customers/:id', async ({ req, params }) => {
   findById(db.customers, params.id, 'Macmiilka');
   if (db.invoices.some(i => i.customerId === params.id)) {
     fail(400, 'Macmiilkan invoice ayuu leeyahay. Marka hore invoice-yada tirtir');
+  }
+  if (db.payments.some(p => p.customerId === params.id) || db.payouts.some(p => p.customerId === params.id)
+    || db.creditUses.some(c => c.customerId === params.id)) {
+    fail(400, 'Macmiilkan lacag xisaab ah ayuu leeyahay, looma tirtiri karo');
   }
   db.customers = db.customers.filter(c => c.id !== params.id);
   return { body: { ok: true } };
@@ -367,7 +398,7 @@ route('POST', '/api/invoices', async ({ req, body }) => {
 route('DELETE', '/api/invoices/:id', async ({ req, params }) => {
   requireAuth(req);
   const inv = findById(db.invoices, params.id, 'Invoice-ka');
-  if (db.payments.some(p => p.invoiceId === inv.id)) {
+  if (db.payments.some(p => p.invoiceId === inv.id) || db.creditUses.some(c => c.invoiceId === inv.id)) {
     fail(400, 'Invoice-kan lacag ayaa laga bixiyay. Marka hore lacagta tirtir');
   }
   for (const l of inv.lines) {
@@ -381,34 +412,96 @@ route('DELETE', '/api/invoices/:id', async ({ req, params }) => {
 // ---- Payments (lacag dhigasho)
 route('GET', '/api/payments', async ({ req }) => {
   requireAuth(req);
-  const payments = [...db.payments]
+  const rows = [
+    ...db.payments.map(p => ({ ...p, kind: 'lacag' })),
+    ...db.creditUses.map(c => ({ ...c, kind: 'akoon' }))
+  ]
     .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))
     .map(p => {
       const inv = db.invoices.find(i => i.id === p.invoiceId) || {};
       return { ...p, invoiceNo: inv.no || '—', customerName: custName(p.customerId) };
     });
-  return { body: { payments } };
+  return { body: { payments: rows } };
 });
 
+// Lacag qabasho: invoice ayaa lagu xiraa, ama akoon ayuu u gelaa.
+// source='akoon' → akoonka macaamiilka ayaa invoice-ka lagu bixiyaa (lacag cusub ma imaanayso).
 route('POST', '/api/payments', async ({ req, body }) => {
   requireAuth(req);
-  const inv = findById(db.invoices, str(body.invoiceId, 'Invoice-ka'), 'Invoice-ka');
   const amount = num(body.amount, 'Lacagta');
   if (amount <= 0) fail(400, 'Lacagtu waa inay ka weyn tahay 0');
-  const remaining = round2(inv.total - paidFor(inv.id));
-  if (amount > remaining) fail(400, `Lacagta ka badan baaqiga (${remaining} USD)`);
-  const p = {
-    id: uid(), invoiceId: inv.id, customerId: inv.customerId, amount,
-    date: dateStr(body.date), note: str(body.note, 'Fiiradda', 160, false), createdAt: nowIso()
-  };
+  const date = dateStr(body.date);
+  const note = str(body.note, 'Fiiradda', 160, false);
+  const useAkoon = body.source === 'akoon';
+
+  if (body.invoiceId) {
+    const inv = findById(db.invoices, str(body.invoiceId, 'Invoice-ka'), 'Invoice-ka');
+    const remaining = round2(inv.total - paidFor(inv.id));
+    if (amount > remaining) fail(400, `Lacagta ka badan baaqiga (${remaining} USD)`);
+    if (useAkoon) {
+      const akoon = akoonOf(inv.customerId);
+      if (amount > akoon) fail(400, `Akoonka macaamiilka ma filna (akoon: ${akoon} USD)`);
+      const c = { id: uid(), customerId: inv.customerId, invoiceId: inv.id, amount, date, note, createdAt: nowIso() };
+      db.creditUses.push(c);
+      return { status: 201, body: { payment: c } };
+    }
+    const p = { id: uid(), invoiceId: inv.id, customerId: inv.customerId, amount, date, note, createdAt: nowIso() };
+    db.payments.push(p);
+    return { status: 201, body: { payment: p } };
+  }
+
+  if (useAkoon) fail(400, 'Akoonka ka qaadasho waa in invoice la doortaa');
+  const customer = findById(db.customers, str(body.customerId, 'Macmiilka'), 'Macmiilka');
+  const p = { id: uid(), invoiceId: null, customerId: customer.id, amount, date, note, createdAt: nowIso() };
   db.payments.push(p);
   return { status: 201, body: { payment: p } };
 });
 
 route('DELETE', '/api/payments/:id', async ({ req, params }) => {
   requireAuth(req);
-  findById(db.payments, params.id, 'Lacagta');
-  db.payments = db.payments.filter(p => p.id !== params.id);
+  if (db.payments.some(p => p.id === params.id)) {
+    db.payments = db.payments.filter(p => p.id !== params.id);
+  } else {
+    findById(db.creditUses, params.id, 'Lacagta');
+    db.creditUses = db.creditUses.filter(c => c.id !== params.id);
+  }
+  return { body: { ok: true } };
+});
+
+// ---- Payouts (lacag bixin: macaamiilka akoonkiisa ka qaadanaya)
+route('GET', '/api/payouts', async ({ req }) => {
+  requireAuth(req);
+  const payouts = [...db.payouts]
+    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))
+    .map(p => {
+      const c = db.customers.find(x => x.id === p.customerId) || {};
+      return { ...p, customerName: custName(p.customerId), customerType: custType(c.type) };
+    });
+  return { body: { payouts } };
+});
+
+route('POST', '/api/payouts', async ({ req, body }) => {
+  requireAuth(req);
+  const c = findById(db.customers, str(body.customerId, 'Macmiilka'), 'Macmiilka');
+  const amount = num(body.amount, 'Lacagta');
+  if (amount <= 0) fail(400, 'Lacagtu waa inay ka weyn tahay 0');
+  const after = round2(akoonOf(c.id) - amount);
+  // Amaah (akoon ka badan) waxaa loo ogol yahay macaamiil damiin leh oo keliya; milkiilayaasha xaddi looma yeelo
+  if (after < 0 && c.type !== 'milkiile' && !hasGuarantor(c.guarantor)) {
+    fail(400, 'Amaah looma oggola: macaamiilka damiin (magaca, telefoonka, goobta) ma lahan');
+  }
+  const p = {
+    id: uid(), customerId: c.id, amount, date: dateStr(body.date),
+    note: str(body.note, 'Fiiradda', 160, false), createdAt: nowIso()
+  };
+  db.payouts.push(p);
+  return { status: 201, body: { payout: p, akoon: after } };
+});
+
+route('DELETE', '/api/payouts/:id', async ({ req, params }) => {
+  requireAuth(req);
+  findById(db.payouts, params.id, 'Lacag bixinta');
+  db.payouts = db.payouts.filter(p => p.id !== params.id);
   return { body: { ok: true } };
 });
 
@@ -445,7 +538,7 @@ route('DELETE', '/api/expenses/:id', async ({ req, params }) => {
 route('GET', '/api/dashboard', async ({ req }) => {
   requireAuth(req);
   const sales = sum(db.invoices.map(i => i.total));
-  const received = sum(db.payments.map(p => p.amount));
+  const received = round2(sum(db.payments.map(p => p.amount)) - sum(db.payouts.map(p => p.amount)));
   const expenses = sum(db.expenses.map(e => e.amount));
 
   const months = [];
@@ -465,7 +558,7 @@ route('GET', '/api/dashboard', async ({ req }) => {
     body: {
       sales,
       received,
-      receivable: round2(sales - received),
+      receivable: round2(sales - sum(db.invoices.map(i => paidFor(i.id)))),
       expenses,
       profit: round2(received - expenses),
       rate: sales ? Math.round((received / sales) * 100) : 0,
