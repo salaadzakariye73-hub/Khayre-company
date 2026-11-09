@@ -146,11 +146,27 @@ async function renderAuth() {
 }
 
 // ---------- Shell ----------
+// Muuqaalka: default cad (isku mid telefon iyo kombiyuutar). Badhanka ayaa mugdi u beddela, doorashadana waa la xasuustaa.
+const THEME_KEY = 'dh_theme';
+function applyTheme() {
+  let t = 'light';
+  try { t = localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'; } catch { /* ignore */ }
+  document.documentElement.dataset.theme = t;
+}
+const themeIcon = () => (document.documentElement.dataset.theme === 'dark' ? '☀️' : '🌙');
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem(THEME_KEY, next); } catch { /* ignore */ }
+  applyTheme();
+  const b = $('#themeBtn');
+  if (b) b.textContent = themeIcon();
+}
+
 function topbarHtml() {
   const initials = esc((state.user.name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase());
   return `<header class="topbar">
     <div class="search"><span>🔍</span><input id="globalSearch" placeholder="Raadi invoice (INV-0001) ama macmiil" autocomplete="off"></div>
-    <div class="top-right"><span class="bell" title="Ogeysiisyo">🔔</span><span class="avatar">${initials}</span></div>
+    <div class="top-right"><span class="bell" title="Ogeysiisyo">🔔</span><button class="theme-btn" id="themeBtn" title="Beddel muuqaalka">${themeIcon()}</button><span class="avatar">${initials}</span></div>
   </header>`;
 }
 async function searchEnter(e) {
@@ -201,6 +217,7 @@ function renderShell() {
   });
   $('#logoutBtn').onclick = logout;
   $('#globalSearch').onkeydown = searchEnter;
+  $('#themeBtn').onclick = toggleTheme;
   render();
 }
 
@@ -913,4 +930,5 @@ async function viewUsers(el) {
   bindDel(el, '/api/users/', 'Isticmaalaha waa la tirtiray');
 }
 
+applyTheme();
 boot();
