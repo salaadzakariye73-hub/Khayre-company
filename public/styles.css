@@ -222,6 +222,34 @@ td.r, th.r { font-variant-numeric: tabular-nums; }
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
 
+/* ---------- Invoice form (dizain cusub) ---------- */
+.inv-form { gap: 16px; }
+.form-section { display: grid; gap: 8px; }
+.form-label {
+  font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .04em; text-transform: uppercase;
+}
+.form-section > small { min-height: 16px; }
+.line-card {
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  display: grid; gap: 10px;
+}
+.line-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.line-nums label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.line-foot { display: flex; justify-content: space-between; align-items: center; }
+.inv-summary { background: var(--panel2); border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; }
+.inv-summary .srow { display: flex; justify-content: space-between; color: var(--muted); }
+.inv-summary .srow b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.inv-summary .grand { border-top: 1px dashed var(--line); padding-top: 10px; font-size: 18px; color: var(--ink); }
+.inv-summary .grand b { color: var(--accent); font-size: 22px; }
+
+/* Macmiilka invoice-ka dhexdiisa */
+.inv-customer {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px;
+  background: var(--panel2); border-radius: 12px; padding: 14px 16px; margin: 14px 0;
+}
+.inv-customer > div { display: grid; gap: 4px; }
+.inv-customer b { font-size: 15px; }
+
 /* ---------- Toasts ---------- */
 .toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 10px; z-index: 60; }
 .toast {
