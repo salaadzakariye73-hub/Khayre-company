@@ -158,11 +158,22 @@ async function searchEnter(e) {
   const q = e.target.value.trim().toLowerCase();
   if (!q) return;
   try {
-    const { invoices } = await api('GET', '/api/invoices');
-    const hit = invoices.find(i => i.no.toLowerCase().includes(q) || i.customerName.toLowerCase().includes(q));
-    if (hit) openInvoice(hit.id);
-    else toast('Ma helin: ' + q, 'bad');
+    const [{ invoices }, { customers }] = await Promise.all([api('GET', '/api/invoices'), api('GET', '/api/customers')]);
+    const invHit = invoices.find(i => i.no.toLowerCase() === q) || invoices.find(i => i.no.toLowerCase().includes(q));
+    if (invHit) return openInvoice(invHit.id);
+    if (customers.some(c => custMatches(c, q))) {
+      state.custQuery = q;
+      state.view = 'customers';
+      return renderShell();
+    }
+    toast('Ma helin: ' + q, 'bad');
   } catch (err) { toast(err.message, 'bad'); }
+}
+// Macaamiil waxaa la raadiyaa magaca, telefoonka, cinwaanka, iyo xogta damiinka
+function custMatches(c, q) {
+  const g = c.guarantor || {};
+  return [c.name, c.phone, c.address, g.name, g.phone, g.address]
+    .some(v => String(v || '').toLowerCase().includes(q));
 }
 
 function renderShell() {
@@ -185,6 +196,7 @@ function renderShell() {
 
   document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => {
     state.view = b.dataset.view;
+    state.custQuery = '';
     renderShell();
   });
   $('#logoutBtn').onclick = logout;
@@ -670,10 +682,13 @@ const customerBody = d => ({
 });
 
 async function viewCustomers(el) {
-  const { customers } = await api('GET', '/api/customers');
+  const { customers: all } = await api('GET', '/api/customers');
+  const q = (state.custQuery || '').toLowerCase();
+  const customers = q ? all.filter(c => custMatches(c, q)) : all;
   el.innerHTML = `
   <header class="page-head">
     <div><h2>Macaamiil</h2><p class="muted">Macaamiil iyo milkiilayaasha, baaqigooda iyo akoonkooda</p></div>
+    ${q ? `<button class="btn ghost-dark small" id="clearCust">Raadin: "${esc(q)}" · Tirtir ✕</button>` : ''}
   </header>
   <div class="grid-2">
     <form id="custForm" class="card form">
@@ -708,6 +723,8 @@ async function viewCustomers(el) {
     e.preventDefault();
     act(() => api('POST', '/api/customers', customerBody(formData(e.target))), 'Macmiilka waa la kaydiyay');
   };
+  const clr = $('#clearCust');
+  if (clr) clr.onclick = () => { state.custQuery = ''; render(); };
   el.querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
     openCustomerEdit(customers.find(c => c.id === b.dataset.edit)));
   bindDel(el, '/api/customers/', 'Macmiilka waa la tirtiray');
