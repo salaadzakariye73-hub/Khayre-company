@@ -539,6 +539,8 @@ route('GET', '/api/dashboard', async ({ req }) => {
   requireAuth(req);
   const sales = sum(db.invoices.map(i => i.total));
   const received = round2(sum(db.payments.map(p => p.amount)) - sum(db.payouts.map(p => p.amount)));
+  // Lacagta invoice-yada loo bixiyay (akoonka iyo cash labadaba), si ururinta looga qiyaaso iibka
+  const collectedOnInvoices = sum(db.invoices.map(i => paidFor(i.id)));
   const expenses = sum(db.expenses.map(e => e.amount));
 
   const months = [];
@@ -561,7 +563,7 @@ route('GET', '/api/dashboard', async ({ req }) => {
       receivable: round2(sales - sum(db.invoices.map(i => paidFor(i.id)))),
       expenses,
       profit: round2(received - expenses),
-      rate: sales ? Math.round((received / sales) * 100) : 0,
+      rate: sales ? Math.min(100, Math.round((collectedOnInvoices / sales) * 100)) : 0,
       months,
       lowStock: db.items.filter(i => i.stock <= 5).slice(0, 8),
       recent: [...db.invoices].sort(byNewest).slice(0, 5).map(invView)
