@@ -18,7 +18,7 @@ const NAV = [
 
 const state = { token: localStorage.getItem('dh_token'), user: null, view: 'dashboard', custQuery: '' };
 
-// CSS-ka invoice-ka. Waa in uu isku mid yahay styles.css-ka qaybta "Invoice".
+// CSS-ka invoice-ka daabacaadda. Waa in uu isku mid yahay styles.css-ka qaybta "Invoice".
 const INV_CSS = `
 .inv-head{background:var(--accent);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .inv-head h2{margin:0;font-size:24px;letter-spacing:1px;color:#fff}
@@ -387,7 +387,7 @@ async function viewInvoices(el) {
     api('GET', '/api/items'),
     api('GET', '/api/settings')
   ]);
-  const canNew = items.length > 0; // macmiil cusub invoice-ka ayuu ku abuuri karaa
+  const canNew = items.length > 0;
   el.innerHTML = `
   <header class="page-head">
     <div><h2>Invoice-yada</h2><p class="muted">Alaabta la iibiyay macaamiisha</p></div>
@@ -400,58 +400,89 @@ async function viewInvoices(el) {
 }
 
 function openInvoiceForm(customers, items, settings) {
+  const rate = Number(settings.vatRate) || 0;
   const o = openModal(`
     <div class="modal-head"><h3>Invoice cusub</h3><button class="link" data-close>✕</button></div>
-    <form id="invForm" class="form">
-      <div class="row">
-        <select name="customerId" required>
-          <option value="">— Macmiil dooro —</option>
-          ${customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
-        </select>
-        <input name="date" type="date" value="${todayStr()}" required>
+    <form id="invForm" class="form inv-form">
+      <div class="form-section">
+        <span class="form-label">Macmiilka</span>
+        <input name="customerName" id="custName" list="custList" placeholder="Qor magaca macmiilka ama dooro" autocomplete="off" required>
+        <datalist id="custList">${customers.map(c => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>
+        <small id="custHint" class="muted"></small>
       </div>
       <div class="row">
-        <button type="button" class="btn ghost-dark small" id="newCust" style="justify-self:start">+ Macmiil cusub</button>
-        <input name="paidNow" type="number" step="0.01" min="0" placeholder="Lacagta hadda la bixiyay $">
+        <div class="form-section">
+          <span class="form-label">Taariikh</span>
+          <input name="date" type="date" value="${todayStr()}" required>
+        </div>
+        <div class="form-section">
+          <span class="form-label">Hadda la bixiyay ($)</span>
+          <input name="paidNow" type="number" step="0.01" min="0" placeholder="0.00">
+        </div>
+      </div>
+      <div class="form-section">
+        <span class="form-label">Alaabta</span>
+        <div id="lines" class="form"></div>
+        <button type="button" class="btn ghost-dark small" id="addLine" style="justify-self:start">+ Alaab ku dar</button>
+      </div>
+      <div class="inv-summary">
+        <div class="srow"><span>Subtotal</span><b id="sub">$0.00</b></div>
+        <div class="srow"><span>VAT (${rate}%)</span><b id="vat">$0.00</b></div>
+        <div class="srow grand"><span>Wadar</span><b id="grand">$0.00</b></div>
       </div>
       <p class="muted" id="payNote"></p>
-      <div id="lines" class="form"></div>
-      <button type="button" class="btn ghost-dark small" id="addLine" style="justify-self:start">+ Alaab ku dar</button>
-      <div class="totalbar">Subtotal: <b id="sub">$0.00</b> · VAT (${Number(settings.vatRate) || 0}%): <b id="vat">$0.00</b> · Wadar: <b id="grand">$0.00</b></div>
       <button class="btn primary block">Samee invoice</button>
     </form>`);
 
   const linesEl = o.querySelector('#lines');
-  const selCust = o.querySelector('[name=customerId]');
+  const custInput = o.querySelector('#custName');
+  const custHint = o.querySelector('#custHint');
   const paidIn = o.querySelector('[name=paidNow]');
   const payNote = o.querySelector('#payNote');
   const itemOpts = items.map(i => `<option value="${i.id}" data-price="${i.price}">${esc(i.name)} (stock ${i.stock} ${esc(i.unit)})</option>`).join('');
 
+  // Magaca la qoray ayaa macmiil jira ah ka raadiya (lama kala sooci karo xarfaha weyn/yar)
+  const findCust = name => {
+    const n = String(name || '').trim().toLowerCase();
+    return n ? customers.find(c => c.name.trim().toLowerCase() === n) : undefined;
+  };
+  // Macmiil cusub, ama macmiil jira oo invoice ugu horeeya ah: lacagta oo dhan hadda ayuu bixiyaa
+  const isNewCust = () => {
+    const c = findCust(custInput.value);
+    return !c || c.invoices === 0;
+  };
+  const updateHint = () => {
+    const name = custInput.value.trim();
+    const c = findCust(name);
+    custHint.textContent = !name ? '' : c
+      ? `Macmiil jira · Baaqi: ${money(c.balance)} · Akoon: ${money(c.akoon)}`
+      : 'Macmiil cusub — waa la diiwaangelinayaa.';
+  };
+
   paidIn.oninput = () => { paidIn.dataset.touched = '1'; };
 
-  // Macmiil cusub (invoice ugu horeeya) lacagta oo dhan hadda ayuu bixiyaa
-  const isNewCust = () => {
-    const c = customers.find(x => x.id === selCust.value);
-    return !!c && c.invoices === 0;
-  };
   const syncPay = () => {
     const total = Number(o.dataset.total) || 0;
     const isNew = isNewCust();
     paidIn.required = isNew;
-    payNote.textContent = isNew ? 'Macmiilkan cusub waa in invoice-ka oo dhan hadda la bixiyo.' : '';
+    payNote.textContent = isNew ? 'Macmiil cusub ama invoice ugu horeeya: lacagta oo dhan hadda ayuu bixiyaa.' : '';
     if (paidIn.dataset.touched !== '1') paidIn.value = isNew && total ? total.toFixed(2) : '';
   };
-  selCust.onchange = () => { paidIn.dataset.touched = ''; syncPay(); };
+
+  custInput.oninput = () => {
+    paidIn.dataset.touched = '';
+    updateHint();
+    syncPay();
+  };
 
   const recalc = () => {
     let g = 0;
-    linesEl.querySelectorAll('.line').forEach(r => {
+    linesEl.querySelectorAll('.line-card').forEach(r => {
       const t = (Number(r.querySelector('[name=qty]').value) || 0) * (Number(r.querySelector('[name=price]').value) || 0);
       r.querySelector('.ltotal').textContent = money(t);
       g += t;
     });
     // VAT: g * rate / 100 (cents-ka oo la wareejiyay)
-    const rate = Number(settings.vatRate) || 0;
     const vat = Math.round(g * rate) / 100;
     o.dataset.total = g + vat;
     o.querySelector('#sub').textContent = money(g);
@@ -462,13 +493,17 @@ function openInvoiceForm(customers, items, settings) {
 
   const addRow = () => {
     const row = document.createElement('div');
-    row.className = 'line';
+    row.className = 'line-card';
     row.innerHTML = `
       <select name="itemId">${itemOpts}</select>
-      <input name="qty" type="number" step="0.01" min="0.01" value="1" required>
-      <input name="price" type="number" step="0.01" min="0" required>
-      <b class="ltotal">$0.00</b>
-      <button type="button" class="link danger">✕</button>`;
+      <div class="line-nums">
+        <label>Tiro<input name="qty" type="number" step="0.01" min="0.01" value="1" required></label>
+        <label>Qiime ($)<input name="price" type="number" step="0.01" min="0" required></label>
+      </div>
+      <div class="line-foot">
+        <b class="ltotal">$0.00</b>
+        <button type="button" class="link danger">Ka saar</button>
+      </div>`;
     const sel = row.querySelector('select');
     const price = row.querySelector('[name=price]');
     const setPrice = () => { price.value = sel.selectedOptions[0].dataset.price; recalc(); };
@@ -481,49 +516,26 @@ function openInvoiceForm(customers, items, settings) {
   };
 
   o.querySelector('#addLine').onclick = addRow;
-  o.querySelector('#newCust').onclick = () => openQuickCustomer(async () => {
-    const [{ customers: fresh }, { items: freshItems }] = await Promise.all([
-      api('GET', '/api/customers'), api('GET', '/api/items')
-    ]);
-    openInvoiceForm(fresh, freshItems, settings);
-  });
   addRow();
+  updateHint();
   syncPay();
 
   o.querySelector('#invForm').onsubmit = e => {
     e.preventDefault();
     const fd = formData(e.target);
-    const lines = [...linesEl.querySelectorAll('.line')].map(r => ({
+    const lines = [...linesEl.querySelectorAll('.line-card')].map(r => ({
       itemId: r.querySelector('select').value,
       qty: r.querySelector('[name=qty]').value,
       price: r.querySelector('[name=price]').value
     }));
+    const c = findCust(fd.customerName);
     act(() => api('POST', '/api/invoices', {
-      customerId: fd.customerId, date: fd.date, lines, paidNow: fd.paidNow || 0
+      customerId: c ? c.id : '',
+      customerName: fd.customerName.trim(),
+      date: fd.date,
+      lines,
+      paidNow: fd.paidNow || 0
     }), 'Invoice waa la sameeyay');
-  };
-}
-
-// Macmiil cusub oo laga abuuro invoice-ka dhexdiisa
-function openQuickCustomer(onSaved) {
-  const o = openModal(`
-    <div class="modal-head"><h3>Macmiil cusub</h3><button class="link" data-close>✕</button></div>
-    <form id="qcForm" class="form">
-      <input name="name" placeholder="Magaca" required>
-      <input name="phone" placeholder="Telefoon" required>
-      <input name="address" placeholder="Cinwaan / goob" required>
-      <button class="btn primary block">Kaydi macmiilka</button>
-    </form>`);
-  o.querySelector('#qcForm').onsubmit = async e => {
-    e.preventDefault();
-    try {
-      await api('POST', '/api/customers', { ...formData(e.target), type: 'macaamiil', guarantor: {} });
-      toast('Macmiilka waa la kaydiyay');
-      closeModal();
-      await onSaved();
-    } catch (err) {
-      toast(err.message, 'bad');
-    }
   };
 }
 
@@ -596,7 +608,12 @@ async function openInvoice(id) {
       </div>
       ${invFootHtml(s)}
     </div>
-    <h4 style="margin-top:18px" class="no-print">Lacag bixinta</h4>
+    <div class="inv-customer no-print">
+      <div><small>Macmiilka</small><b>${esc(inv.customerName)}</b></div>
+      <div class="r"><small>La bixiyay</small><b class="good">${money(inv.paid)}</b></div>
+      <div class="r"><small>Baaqi</small><b class="${inv.remaining > 0 ? 'bad' : 'good'}">${money(inv.remaining)}</b></div>
+    </div>
+    <h4 class="no-print" style="margin-top:6px">Lacag bixinta</h4>
     <div class="no-print">${inv.payments.length
       ? inv.payments.map(p => `<div class="list-row"><span>${esc(p.date)} ${esc(p.note)}</span><b class="good">${money(p.amount)}</b></div>`).join('')
       : '<p class="muted">Weli lacag ma bixin.</p>'}</div>`);
