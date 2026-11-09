@@ -29,7 +29,7 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 const pill = s => `<span class="pill-s ${s}">${s === 'paid' ? 'La bixiyay' : s === 'partial' ? 'Qayb' : 'Baaqi'}</span>`;
-const kpi = (label, value, cls = '') => `<div class="kpi ${cls}"><small>${label}</small><strong>${value}</strong></div>`;
+const kpi = (label, value, cls = '', icon = '') => `<div class="kpi ${cls}"><div class="kpi-txt"><small>${label}</small><strong>${value}</strong></div>${icon ? `<span class="kpi-ico">${icon}</span>` : ''}</div>`;
 
 function toast(msg, type = 'ok') {
   const t = document.createElement('div');
@@ -146,6 +146,25 @@ async function renderAuth() {
 }
 
 // ---------- Shell ----------
+function topbarHtml() {
+  const initials = esc((state.user.name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase());
+  return `<header class="topbar">
+    <div class="search"><span>🔍</span><input id="globalSearch" placeholder="Raadi invoice (INV-0001) ama macmiil" autocomplete="off"></div>
+    <div class="top-right"><span class="bell" title="Ogeysiisyo">🔔</span><span class="avatar">${initials}</span></div>
+  </header>`;
+}
+async function searchEnter(e) {
+  if (e.key !== 'Enter') return;
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) return;
+  try {
+    const { invoices } = await api('GET', '/api/invoices');
+    const hit = invoices.find(i => i.no.toLowerCase().includes(q) || i.customerName.toLowerCase().includes(q));
+    if (hit) openInvoice(hit.id);
+    else toast('Ma helin: ' + q, 'bad');
+  } catch (err) { toast(err.message, 'bad'); }
+}
+
 function renderShell() {
   const nav = NAV.filter(n => !n.admin || state.user.role === 'admin');
   if (!nav.some(n => n.id === state.view)) state.view = 'dashboard';
@@ -161,7 +180,7 @@ function renderShell() {
         <button class="btn ghost-dark small" id="logoutBtn">Ka bax</button>
       </div>
     </aside>
-    <main class="main"><div id="view"></div></main>
+    <main class="main">${topbarHtml()}<div id="view"></div></main>
   </div>`;
 
   document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => {
@@ -169,6 +188,7 @@ function renderShell() {
     renderShell();
   });
   $('#logoutBtn').onclick = logout;
+  $('#globalSearch').onkeydown = searchEnter;
   render();
 }
 
@@ -211,34 +231,87 @@ function invTable(list, withBtn = true) {
 }
 
 // ---------- Dashboard ----------
+function lineChart(months) {
+  const W = 640, H = 230, P = 26;
+  const max = Math.max(1, ...months.flatMap(m => [m.sales, m.received, m.expenses]));
+  const x = i => P + (i * (W - 2 * P)) / Math.max(1, months.length - 1);
+  const y = v => H - P - (v / max) * (H - 2 * P);
+  const path = key => months.map((m, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(m[key]).toFixed(1)}`).join(' ');
+  const area = key => `${path(key)} L${x(months.length - 1).toFixed(1)},${H - P} L${x(0).toFixed(1)},${H - P} Z`;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const yy = (H - P - f * (H - 2 * P)).toFixed(1);
+    return `<line x1="${P}" x2="${W - P}" y1="${yy}" y2="${yy}" class="gl"/>`;
+  }).join('');
+  const labels = months.map((m, i) => `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" class="ax">${m.month.slice(5)}</text>`).join('');
+  return `<div class="linewrap"><svg viewBox="0 0 ${W} ${H}" class="linechart" role="img" aria-label="Iib, helay, kharash">
+    ${grid}
+    <path d="${area('sales')}" class="ar-s"/>
+    <path d="${path('sales')}" class="ln ln-s"/>
+    <path d="${path('received')}" class="ln ln-r"/>
+    <path d="${path('expenses')}" class="ln ln-e"/>
+    ${labels}
+  </svg></div>`;
+}
+
+// Task-yada: browser-ka kaliya (localStorage)
+const TASK_KEY = 'dh_tasks';
+function loadTasks() {
+  try { return JSON.parse(localStorage.getItem(TASK_KEY)) || []; } catch { return []; }
+}
+function saveTasks(t) {
+  try { localStorage.setItem(TASK_KEY, JSON.stringify(t)); } catch { /* browser-ka xog kaydin ma oggola */ }
+}
+function tasksHtml() {
+  const t = loadTasks();
+  return `<div class="tasks">
+    ${t.length ? t.map((x, i) => `<div class="task ${x.done ? 'done' : ''}">
+      <input type="checkbox" data-task="${i}" ${x.done ? 'checked' : ''}>
+      <span>${esc(x.text)}</span>
+      <button class="link danger" data-deltask="${i}" title="Tirtir">✕</button>
+    </div>`).join('') : '<p class="muted">Task ma jiro.</p>'}
+    <form id="taskForm" class="task-add"><input name="text" placeholder="+ Task cusub" required></form>
+  </div>`;
+}
+function bindTasks(el) {
+  el.querySelectorAll('[data-task]').forEach(c => c.onchange = () => {
+    const t = loadTasks(); t[c.dataset.task].done = c.checked; saveTasks(t); render();
+  });
+  el.querySelectorAll('[data-deltask]').forEach(b => b.onclick = () => {
+    const t = loadTasks(); t.splice(Number(b.dataset.deltask), 1); saveTasks(t); render();
+  });
+  const f = el.querySelector('#taskForm');
+  if (f) f.onsubmit = e => {
+    e.preventDefault();
+    const text = formData(e.target).text.trim();
+    if (!text) return;
+    const t = loadTasks(); t.push({ text, done: false }); saveTasks(t); render();
+  };
+}
+
 async function viewDashboard(el) {
   const d = await api('GET', '/api/dashboard');
-  const maxM = Math.max(1, ...d.months.map(m => Math.max(m.sales, m.received, m.expenses)));
   el.innerHTML = `
   <header class="page-head">
     <div><h2>Dashboard</h2><p class="muted">Xaaladda shirkadda · ${todayStr()}</p></div>
   </header>
   <section class="kpis">
-    ${kpi('Iibka guud (Sales)', money(d.sales))}
-    ${kpi('Lacag la helay', money(d.received), 'green')}
-    ${kpi('Lacag qabasho (baaqi)', money(d.receivable), 'coral')}
-    ${kpi('Kharashka guud', money(d.expenses), 'orange')}
+    ${kpi('Iibka guud (Sales)', money(d.sales), '', '🧾')}
+    ${kpi('Lacag la helay', money(d.received), 'green', '💰')}
+    ${kpi('Lacag qabasho (baaqi)', money(d.receivable), 'coral', '⏳')}
+    ${kpi('Kharashka guud', money(d.expenses), 'orange', '💸')}
   </section>
-  <section class="grid-3">
+  <section class="grid-split">
     <div class="card">
       <h3>Iib, helay iyo kharash (6 bilood)</h3>
-      <div class="chart">${d.months.map(m => `
-        <div class="col">
-          <div class="bars">
-            <i class="bar-s" style="height:${(m.sales / maxM) * 100}%" title="Iib ${money(m.sales)}"></i>
-            <i class="bar-r" style="height:${(m.received / maxM) * 100}%" title="Helay ${money(m.received)}"></i>
-            <i class="bar-e" style="height:${(m.expenses / maxM) * 100}%" title="Kharash ${money(m.expenses)}"></i>
-          </div>
-          <small>${m.month.slice(5)}</small>
-        </div>`).join('')}
-      </div>
+      ${lineChart(d.months)}
       <div class="legend"><span class="lg-s">Iib</span><span class="lg-r">Helay</span><span class="lg-e">Kharash</span></div>
     </div>
+    <div class="card">
+      <h3>Task</h3>
+      ${tasksHtml()}
+    </div>
+  </section>
+  <section class="grid-2">
     <div class="card ring-card">
       <h3>Ururinta lacagta</h3>
       <div class="ring" style="--p:${d.rate}"><span>${d.rate}%</span></div>
@@ -256,6 +329,7 @@ async function viewDashboard(el) {
     ${invTable(d.recent)}
   </section>`;
   bindInvoiceLinks(el);
+  bindTasks(el);
 }
 
 // ---------- Invoices ----------
