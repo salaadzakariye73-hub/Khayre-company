@@ -397,8 +397,19 @@ route('GET', '/api/invoices/:id', async ({ req, params }) => {
 
 route('POST', '/api/invoices', async ({ req, body }) => {
   requireAuth(req);
-  const customer = findById(db.customers, str(body.customerId, 'Macmiilka'), 'Macmiilka');
   const date = dateStr(body.date);
+  // Macmiil jira: customerId. Macmiil cusub: magaca oo keliya, wuu diiwaangelinayaa (haddii magacu jiro, wuu isticmaalayaa)
+  let customer;
+  if (body.customerId) {
+    customer = findById(db.customers, str(body.customerId, 'Macmiilka'), 'Macmiilka');
+  } else {
+    const name = str(body.customerName, 'Magaca macmiilka', 80);
+    customer = db.customers.find(c => c.name.trim().toLowerCase() === name.toLowerCase());
+    if (!customer) {
+      customer = { id: uid(), name, phone: '', address: '', type: 'macaamiil', guarantor: null, createdAt: nowIso() };
+      db.customers.push(customer);
+    }
+  }
   if (!Array.isArray(body.lines) || !body.lines.length) fail(400, 'Ugu yaraan hal alaab ku dar');
 
   const lines = body.lines.map(l => {
