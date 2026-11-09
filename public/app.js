@@ -1,7 +1,6 @@
 'use strict';
 /* Dhismaha Maamul — frontend (vanilla JS) */
 
-const COMPANY = 'Shirkadda Dhismaha'; // magaca invoice-ka ku qoran (beddel halkan)
 const EXPENSE_CATS = ['Alaab', 'Shaqaale', 'Gaadiid', 'Kiro', 'Kale'];
 
 const NAV = [
@@ -13,10 +12,27 @@ const NAV = [
   { id: 'items', label: 'Alaabta', icon: '🧱' },
   { id: 'expenses', label: 'Kharash', icon: '💸' },
   { id: 'reports', label: 'Xisaab', icon: '📊' },
+  { id: 'settings', label: 'Settings', icon: '⚙️', admin: true },
   { id: 'users', label: 'Users', icon: '🛡️', admin: true }
 ];
 
-const state = { token: localStorage.getItem('dh_token'), user: null, view: 'dashboard' };
+const state = { token: localStorage.getItem('dh_token'), user: null, view: 'dashboard', custQuery: '' };
+
+// CSS-ka invoice-ka. Waa in uu isku mid yahay styles.css-ka qaybta "Invoice".
+const INV_CSS = `
+.inv-head{background:var(--accent);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.inv-head h2{margin:0;font-size:24px;letter-spacing:1px;color:#fff}
+.inv-head small{color:rgba(255,255,255,.85)}
+.inv-title{font-size:26px;font-weight:700;letter-spacing:2px}
+.inv-meta{display:flex;justify-content:space-between;padding:16px 22px;gap:20px}
+.inv-table{width:calc(100% - 44px);margin:0 22px;border-collapse:collapse}
+.inv-table th{background:var(--accent);color:#fff;padding:8px;text-align:left;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.inv-table td{padding:8px;border-bottom:0}
+.inv-table tbody tr:nth-child(even) td{background:rgba(46,61,130,.07);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.inv-totals{display:flex;justify-content:flex-end;gap:18px;flex-wrap:wrap;padding:14px 22px}
+.inv-foot{display:flex;justify-content:space-between;gap:20px;padding:14px 22px;white-space:pre-line}
+.inv-contact{background:var(--accent);color:#fff;padding:10px 22px;text-align:center;margin-top:18px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+`;
 
 // ---------- Utils ----------
 const $ = s => document.querySelector(s);
@@ -35,7 +51,8 @@ function toast(msg, type = 'ok') {
   const t = document.createElement('div');
   t.className = `toast ${type}`;
   t.textContent = msg;
-  $('#toasts').appendChild(t);
+  const box = $('#toasts');
+  if (box) box.appendChild(t); else document.body.appendChild(t);
   setTimeout(() => t.remove(), 3200);
 }
 
@@ -230,6 +247,7 @@ const VIEWS = {
   items: viewItems,
   expenses: viewExpenses,
   reports: viewReports,
+  settings: viewSettings,
   users: viewUsers
 };
 
@@ -251,7 +269,7 @@ function invTable(list, withBtn = true) {
     <tbody>${list.map(i => `<tr>
       <td><b>${esc(i.no)}</b></td>
       <td>${esc(i.customerName)}</td>
-      <td>${i.date}</td>
+      <td>${esc(i.date)}</td>
       <td class="r">${money(i.total)}</td>
       <td class="r ${i.remaining > 0 ? 'bad' : 'good'}">${money(i.remaining)}</td>
       <td>${pill(i.status)}</td>
@@ -272,7 +290,7 @@ function lineChart(months) {
     return `<line x1="${P}" x2="${W - P}" y1="${yy}" y2="${yy}" class="gl"/>`;
   }).join('');
   const labels = months.map((m, i) => `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" class="ax">${m.month.slice(5)}</text>`).join('');
-  return `<div class="linewrap"><svg viewBox="0 0 ${W} ${H}" class="linechart" role="img" aria-label="Iib, helay, kharash">
+  return `<div class="linewrap"><svg viewBox="0 0 ${W} ${H}" class="linechart" role="img" aria-label="Iib, helay iyo kharash">
     ${grid}
     <path d="${area('sales')}" class="ar-s"/>
     <path d="${path('sales')}" class="ln ln-s"/>
@@ -363,40 +381,67 @@ async function viewDashboard(el) {
 
 // ---------- Invoices ----------
 async function viewInvoices(el) {
-  const [{ invoices }, { customers }, { items }] = await Promise.all([
+  const [{ invoices }, { customers }, { items }, { settings }] = await Promise.all([
     api('GET', '/api/invoices'),
     api('GET', '/api/customers'),
-    api('GET', '/api/items')
+    api('GET', '/api/items'),
+    api('GET', '/api/settings')
   ]);
-  const canNew = customers.length && items.length;
+  const canNew = items.length > 0; // macmiil cusub invoice-ka ayuu ku abuuri karaa
   el.innerHTML = `
   <header class="page-head">
     <div><h2>Invoice-yada</h2><p class="muted">Alaabta la iibiyay macaamiisha</p></div>
     <button class="btn primary" id="newInv" ${canNew ? '' : 'disabled'}>+ Invoice cusub</button>
   </header>
-  ${!customers.length ? '<p class="muted">Marka hore macaamiil ku dar.</p>' : ''}
   ${!items.length ? '<p class="muted">Marka hore alaab ku dar.</p>' : ''}
   <section class="card">${invTable(invoices)}</section>`;
-  if (canNew) $('#newInv').onclick = () => openInvoiceForm(customers, items);
+  if (canNew) $('#newInv').onclick = () => openInvoiceForm(customers, items, settings);
   bindInvoiceLinks(el);
 }
 
-function openInvoiceForm(customers, items) {
+function openInvoiceForm(customers, items, settings) {
   const o = openModal(`
     <div class="modal-head"><h3>Invoice cusub</h3><button class="link" data-close>✕</button></div>
     <form id="invForm" class="form">
       <div class="row">
-        <select name="customerId" required>${customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+        <select name="customerId" required>
+          <option value="">— Macmiil dooro —</option>
+          ${customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+        </select>
         <input name="date" type="date" value="${todayStr()}" required>
       </div>
+      <div class="row">
+        <button type="button" class="btn ghost-dark small" id="newCust" style="justify-self:start">+ Macmiil cusub</button>
+        <input name="paidNow" type="number" step="0.01" min="0" placeholder="Lacagta hadda la bixiyay $">
+      </div>
+      <p class="muted" id="payNote"></p>
       <div id="lines" class="form"></div>
       <button type="button" class="btn ghost-dark small" id="addLine" style="justify-self:start">+ Alaab ku dar</button>
-      <div class="totalbar">Wadar: <b id="grand">$0.00</b></div>
+      <div class="totalbar">Subtotal: <b id="sub">$0.00</b> · VAT (${Number(settings.vatRate) || 0}%): <b id="vat">$0.00</b> · Wadar: <b id="grand">$0.00</b></div>
       <button class="btn primary block">Samee invoice</button>
     </form>`);
 
   const linesEl = o.querySelector('#lines');
+  const selCust = o.querySelector('[name=customerId]');
+  const paidIn = o.querySelector('[name=paidNow]');
+  const payNote = o.querySelector('#payNote');
   const itemOpts = items.map(i => `<option value="${i.id}" data-price="${i.price}">${esc(i.name)} (stock ${i.stock} ${esc(i.unit)})</option>`).join('');
+
+  paidIn.oninput = () => { paidIn.dataset.touched = '1'; };
+
+  // Macmiil cusub (invoice ugu horeeya) lacagta oo dhan hadda ayuu bixiyaa
+  const isNewCust = () => {
+    const c = customers.find(x => x.id === selCust.value);
+    return !!c && c.invoices === 0;
+  };
+  const syncPay = () => {
+    const total = Number(o.dataset.total) || 0;
+    const isNew = isNewCust();
+    paidIn.required = isNew;
+    payNote.textContent = isNew ? 'Macmiilkan cusub waa in invoice-ka oo dhan hadda la bixiyo.' : '';
+    if (paidIn.dataset.touched !== '1') paidIn.value = isNew && total ? total.toFixed(2) : '';
+  };
+  selCust.onchange = () => { paidIn.dataset.touched = ''; syncPay(); };
 
   const recalc = () => {
     let g = 0;
@@ -405,7 +450,14 @@ function openInvoiceForm(customers, items) {
       r.querySelector('.ltotal').textContent = money(t);
       g += t;
     });
-    o.querySelector('#grand').textContent = money(g);
+    // VAT: g * rate / 100 (cents-ka oo la wareejiyay)
+    const rate = Number(settings.vatRate) || 0;
+    const vat = Math.round(g * rate) / 100;
+    o.dataset.total = g + vat;
+    o.querySelector('#sub').textContent = money(g);
+    o.querySelector('#vat').textContent = money(vat);
+    o.querySelector('#grand').textContent = money(g + vat);
+    syncPay();
   };
 
   const addRow = () => {
@@ -429,7 +481,14 @@ function openInvoiceForm(customers, items) {
   };
 
   o.querySelector('#addLine').onclick = addRow;
+  o.querySelector('#newCust').onclick = () => openQuickCustomer(async () => {
+    const [{ customers: fresh }, { items: freshItems }] = await Promise.all([
+      api('GET', '/api/customers'), api('GET', '/api/items')
+    ]);
+    openInvoiceForm(fresh, freshItems, settings);
+  });
   addRow();
+  syncPay();
 
   o.querySelector('#invForm').onsubmit = e => {
     e.preventDefault();
@@ -439,40 +498,74 @@ function openInvoiceForm(customers, items) {
       qty: r.querySelector('[name=qty]').value,
       price: r.querySelector('[name=price]').value
     }));
-    act(() => api('POST', '/api/invoices', { customerId: fd.customerId, date: fd.date, lines }), 'Invoice waa la sameeyey');
+    act(() => api('POST', '/api/invoices', {
+      customerId: fd.customerId, date: fd.date, lines, paidNow: fd.paidNow || 0
+    }), 'Invoice waa la sameeyay');
   };
 }
 
+// Macmiil cusub oo laga abuuro invoice-ka dhexdiisa
+function openQuickCustomer(onSaved) {
+  const o = openModal(`
+    <div class="modal-head"><h3>Macmiil cusub</h3><button class="link" data-close>✕</button></div>
+    <form id="qcForm" class="form">
+      <input name="name" placeholder="Magaca" required>
+      <input name="phone" placeholder="Telefoon" required>
+      <input name="address" placeholder="Cinwaan / goob" required>
+      <button class="btn primary block">Kaydi macmiilka</button>
+    </form>`);
+  o.querySelector('#qcForm').onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await api('POST', '/api/customers', { ...formData(e.target), type: 'macaamiil', guarantor: {} });
+      toast('Macmiilka waa la kaydiyay');
+      closeModal();
+      await onSaved();
+    } catch (err) {
+      toast(err.message, 'bad');
+    }
+  };
+}
+
+// Madhan invoice-ka: shirkadda, bangiga, terms, footer (settings-ka ayaa ka imanaya)
+const invHeadHtml = s => `<div class="inv-head" style="--accent:${esc(s.accent)}">
+  <div><h2>${esc(s.company)}</h2><small>${esc(s.slogan)}</small></div>
+  <div class="inv-title">INVOICE</div>
+</div>`;
+
+const invFootHtml = s => `<div class="inv-foot">
+  <div><b>PAYMENT METHOD</b><br>${esc(s.bankName)}<br>${esc(s.bankAccount)}</div>
+  <div><b>TERMS &amp; CONDITIONS</b><br>${esc(s.terms)}</div>
+</div>
+<div class="inv-contact">${[s.email, s.phone, s.website].filter(Boolean).map(v => esc(v)).join(' · ')}</div>`;
+
 // Invoice-ka bog cusub ayaa lagu daabacaa (browser-ka desktop-ka iyo telefoonka way shaqeeyaan)
 function printInvoice() {
-  const area = document.querySelector('#printArea');
+  const area = $('#printArea');
   if (!area) return;
   const w = window.open('', '_blank', 'width=900,height=700');
   if (!w) return toast('Popup-ka browser-ka xidhay. Ogolow popup si aad u daabacdo', 'bad');
   w.document.write(`<!doctype html><html lang="so"><head><meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Invoice</title>
-  <style>
-    body { font-family: "Segoe UI", system-ui, Arial, sans-serif; color: #000; background: #fff; margin: 24px; font-size: 14px; }
-    h2, h3, h4 { margin: 0 0 10px; }
-    small { color: #444; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 8px; border-bottom: 1px solid #bbb; text-align: left; }
-    .r { text-align: right; }
-    .inv-head { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 10px; }
-    .totals { display: flex; justify-content: flex-end; gap: 18px; flex-wrap: wrap; margin-top: 14px; }
-    .list-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #bbb; }
-    .good, .bad { color: #000; }
-    @page { margin: 14mm; }
-  </style></head><body>${area.innerHTML}</body></html>`);
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Invoice</title>
+    <style>
+      @page { size: A4; margin: 0; }
+      body { margin: 0; font-family: "Segoe UI", system-ui, Arial, sans-serif; color: #111; }
+      ${INV_CSS}
+    </style></head><body><div style="${area.getAttribute('style') || ''}">${area.innerHTML}</div></body></html>`);
   w.document.close();
-  w.onload = () => { w.focus(); w.print(); };
+  setTimeout(() => { w.focus(); w.print(); }, 300);
 }
 
 async function openInvoice(id) {
-  let inv;
-  try { inv = await api('GET', '/api/invoices/' + id); }
-  catch (e) { return toast(e.message, 'bad'); }
+  let inv, s;
+  try {
+    [inv, { settings: s }] = await Promise.all([
+      api('GET', '/api/invoices/' + id),
+      api('GET', '/api/settings')
+    ]);
+  } catch (e) { return toast(e.message, 'bad'); }
+
   openModal(`
     <div class="modal-head"><h3>${esc(inv.no)}</h3><button class="link" data-close>✕</button></div>
     <div class="actions no-print">
@@ -480,30 +573,33 @@ async function openInvoice(id) {
       ${inv.remaining > 0 ? '<button class="btn ghost-dark" id="payBtn">💵 Lacag ka qaado</button>' : ''}
       <button class="btn danger-dark" id="delInv">Tirtir</button>
     </div>
-    <div id="printArea" class="print-area">
-      <div class="inv-head">
-        <div><h2>${esc(COMPANY)}</h2><small>INVOICE</small></div>
-        <div class="r"><b>${esc(inv.no)}</b><br><small>Taariikh: ${inv.date}</small></div>
+    <div id="printArea" class="print-area" style="--accent:${esc(s.accent)}">
+      ${invHeadHtml(s)}
+      <div class="inv-meta">
+        <div><small>Macmiilka</small><br><b>${esc(inv.customerName)}</b></div>
+        <div class="r"><b>${esc(inv.no)}</b><br><small>Taariikh: ${esc(inv.date)}</small></div>
       </div>
-      <p><b>Macmiilka:</b> ${esc(inv.customerName)}</p>
-      <div class="table-wrap"><table class="inv-table">
+      <table class="inv-table">
         <thead><tr><th>Alaab</th><th>Tiro</th><th class="r">Qiime</th><th class="r">Wadar</th></tr></thead>
         <tbody>${inv.lines.map(l => `<tr>
           <td>${esc(l.name)}</td>
           <td>${l.qty} ${esc(l.unit)}</td>
           <td class="r">${money(l.price)}</td>
           <td class="r">${money(l.total)}</td></tr>`).join('')}</tbody>
-      </table></div>
-      <div class="totals">
+      </table>
+      <div class="inv-totals">
+        <div>Subtotal: <b>${money(inv.subtotal ?? inv.total)}</b></div>
+        <div>VAT (${inv.vatRate ?? 0}%): <b>${money(inv.vat ?? 0)}</b></div>
         <div>Wadar: <b>${money(inv.total)}</b></div>
         <div>La bixiyay: <b>${money(inv.paid)}</b></div>
         <div>Baaqi: <b>${money(inv.remaining)}</b></div>
       </div>
-      <h4 style="margin-top:18px">Lacag bixinta</h4>
-      ${inv.payments.length
-        ? inv.payments.map(p => `<div class="list-row"><span>${p.date} ${esc(p.note)}</span><b class="good">${money(p.amount)}</b></div>`).join('')
-        : '<p class="muted">Weli lacag ma bixin.</p>'}
-    </div>`);
+      ${invFootHtml(s)}
+    </div>
+    <h4 style="margin-top:18px" class="no-print">Lacag bixinta</h4>
+    <div class="no-print">${inv.payments.length
+      ? inv.payments.map(p => `<div class="list-row"><span>${esc(p.date)} ${esc(p.note)}</span><b class="good">${money(p.amount)}</b></div>`).join('')
+      : '<p class="muted">Weli lacag ma bixin.</p>'}</div>`);
 
   $('#printBtn').onclick = printInvoice;
   if ($('#payBtn')) $('#payBtn').onclick = () => openPaymentForm(inv.id);
@@ -520,7 +616,7 @@ function receiptsTable(list) {
   return `<div class="table-wrap"><table>
     <thead><tr><th>Taariikh</th><th>Macmiil</th><th>Invoice</th><th>Nooca</th><th>Fiiro</th><th class="r">Lacag</th><th></th></tr></thead>
     <tbody>${list.map(p => `<tr>
-      <td>${p.date}</td>
+      <td>${esc(p.date)}</td>
       <td>${esc(p.customerName)}</td>
       <td>${esc(p.invoiceNo)}</td>
       <td>${p.kind === 'akoon' ? 'Akoon' : 'Lacag cusub'}</td>
@@ -549,7 +645,7 @@ async function viewReceivables(el) {
         <tbody>${open.map(i => `<tr>
           <td>${esc(i.customerName)}</td>
           <td>${esc(i.no)}</td>
-          <td>${i.date}</td>
+          <td>${esc(i.date)}</td>
           <td class="r bad">${money(i.remaining)}</td>
           <td><button class="btn small primary" data-pay="${i.id}">Lacag ka qaado</button></td>
         </tr>`).join('')}</tbody>
@@ -636,7 +732,7 @@ function payoutsTable(list) {
   return `<div class="table-wrap"><table>
     <thead><tr><th>Taariikh</th><th>Macmiil</th><th>Nooca</th><th>Fiiro</th><th class="r">Lacag</th><th></th></tr></thead>
     <tbody>${list.map(p => `<tr>
-      <td>${p.date}</td>
+      <td>${esc(p.date)}</td>
       <td>${esc(p.customerName)}</td>
       <td>${p.customerType === 'milkiile' ? 'Milkiile' : 'Macaamiil'}</td>
       <td>${esc(p.note)}</td>
@@ -835,7 +931,7 @@ async function viewExpenses(el) {
     <div class="card"><div class="table-wrap"><table>
       <thead><tr><th>Taariikh</th><th>Sharaxaad</th><th class="r">Qadar</th><th></th></tr></thead>
       <tbody>${expenses.map(x => `<tr>
-        <td>${x.date}</td>
+        <td>${esc(x.date)}</td>
         <td>${esc(x.title)}<small class="block">${esc(x.category)}</small></td>
         <td class="r bad">${money(x.amount)}</td>
         <td><button class="link danger del" data-id="${x.id}">✕</button></td>
@@ -870,7 +966,7 @@ async function viewReports(el) {
     <section class="card"><h3>Bishiiba</h3><div class="table-wrap"><table>
       <thead><tr><th>Bisha</th><th class="r">Iib</th><th class="r">Helay</th><th class="r">Kharash</th><th class="r">Faa'iido</th></tr></thead>
       <tbody>${r.monthly.map(m => `<tr>
-        <td>${m.month}</td>
+        <td>${esc(m.month)}</td>
         <td class="r">${money(m.sales)}</td>
         <td class="r">${money(m.received)}</td>
         <td class="r">${money(m.expenses)}</td>
@@ -884,6 +980,57 @@ async function viewReports(el) {
     </section>
   </div>`;
   $('#printRep').onclick = () => window.print();
+}
+
+// ---------- Settings (admin): xogta shirkadda iyo muuqaalka invoice-ka ----------
+async function viewSettings(el) {
+  const { settings: s } = await api('GET', '/api/settings');
+  el.innerHTML = `
+  <header class="page-head">
+    <div><h2>Settings</h2><p class="muted">Xogta shirkadda invoice-ka ku jirta iyo muuqaalkiisa</p></div>
+  </header>
+  <div class="grid-2">
+    <form id="setForm" class="card form">
+      <h3>Xogta shirkadda</h3>
+      <input name="company" value="${esc(s.company)}" placeholder="Magaca shirkadda" required>
+      <input name="slogan" value="${esc(s.slogan)}" placeholder="Slogan">
+      <div class="row">
+        <input name="phone" value="${esc(s.phone)}" placeholder="Telefoon">
+        <input name="email" value="${esc(s.email)}" placeholder="Email">
+      </div>
+      <input name="website" value="${esc(s.website)}" placeholder="Website">
+      <input name="address" value="${esc(s.address)}" placeholder="Cinwaan">
+      <h3>Bangiga</h3>
+      <div class="row">
+        <input name="bankName" value="${esc(s.bankName)}" placeholder="Magaca bangiga">
+        <input name="bankAccount" value="${esc(s.bankAccount)}" placeholder="Lambarka account-ka">
+      </div>
+      <h3>Terms &amp; Conditions</h3>
+      <textarea name="terms" rows="4" placeholder="Shuruudaha lacag bixinta">${esc(s.terms)}</textarea>
+      <input name="vatRate" type="number" step="0.01" min="0" max="100" value="${esc(s.vatRate ?? 5)}" placeholder="VAT %">
+      <label class="row" style="align-items:center">Midabka invoice-ka
+        <input name="accent" type="color" value="${esc(s.accent)}">
+      </label>
+      <button class="btn primary block">Kaydi settings-ka</button>
+    </form>
+    <div class="card">
+      <h3>Preview</h3>
+      <div id="setPreview" class="print-area"></div>
+    </div>
+  </div>`;
+
+  const form = $('#setForm');
+  const showPreview = () => {
+    const d = formData(form);
+    $('#setPreview').innerHTML = invHeadHtml(d) + invFootHtml(d);
+  };
+  form.oninput = showPreview;
+  showPreview();
+
+  form.onsubmit = e => {
+    e.preventDefault();
+    act(() => api('PUT', '/api/settings', formData(e.target)), 'Settings-ka waa la kaydiyay');
+  };
 }
 
 // ---------- Users (admin) ----------
