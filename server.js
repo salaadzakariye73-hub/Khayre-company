@@ -21,7 +21,13 @@ let db = null;
 
 const emptyDb = () => ({
   users: [], sessions: {}, customers: [], items: [],
-  invoices: [], payments: [], payouts: [], creditUses: [], expenses: [], counters: { invoice: 0 }
+  invoices: [], payments: [], payouts: [], creditUses: [], expenses: [],
+  counters: { invoice: 0 },
+  settings: {
+    company: 'Shirkadda Dhismaha', slogan: '', phone: '', email: '',
+    website: '', address: '', bankName: '', bankAccount: '', terms: '',
+    accent: '#0f3d2e', vatRate: 5
+  }
 });
 
 function loadFile() {
@@ -189,6 +195,13 @@ function custView(c) {
     invoices: invs.length, total, paid, balance: round2(total - paid), akoon: akoonOf(c.id)
   };
 }
+// Telefoon gaar ah: laba macmiil isku telefoon ma lahaan karaan
+function assertPhoneFree(phone, exceptId) {
+  if (!phone) return;
+  if (db.customers.some(x => x.phone === phone && x.id !== exceptId)) {
+    fail(409, 'Telefoonkan macmiil ayaa hore u diiwaangashan');
+  }
+}
 
 // ---------------------------------------------------------------- Router
 const routes = [];
@@ -237,6 +250,30 @@ route('POST', '/api/auth/logout', async ({ req }) => {
 
 route('GET', '/api/auth/me', async ({ req }) => ({ body: { user: publicUser(requireAuth(req).user) } }));
 
+// ---- Settings (xogta shirkadda: invoice-ka iyo muuqaalkiisa)
+route('GET', '/api/settings', async ({ req }) => {
+  requireAuth(req);
+  return { body: { settings: db.settings } };
+});
+
+route('PUT', '/api/settings', async ({ req, body }) => {
+  requireAdmin(req);
+  db.settings = {
+    company: str(body.company, 'Magaca shirkadda', 80),
+    slogan: str(body.slogan, 'Slogan', 80, false),
+    phone: str(body.phone, 'Telefoonka', 30, false),
+    email: str(body.email, 'Emailka', 120, false),
+    website: str(body.website, 'Website-ka', 120, false),
+    address: str(body.address, 'Cinwaanka', 160, false),
+    bankName: str(body.bankName, 'Magaca bangiga', 80, false),
+    bankAccount: str(body.bankAccount, 'Lambarka account-ka', 60, false),
+    terms: str(body.terms, 'Terms', 1000, false),
+    vatRate: Math.min(100, Math.max(0, optNum(body.vatRate, 'VAT', 5))),
+    accent: /^#[0-9a-f]{6}$/i.test(body.accent) ? body.accent : '#0f3d2e'
+  };
+  return { body: { settings: db.settings } };
+});
+
 // ---- Customers (macaamiil)
 route('GET', '/api/customers', async ({ req }) => {
   requireAuth(req);
@@ -245,10 +282,12 @@ route('GET', '/api/customers', async ({ req }) => {
 
 route('POST', '/api/customers', async ({ req, body }) => {
   requireAuth(req);
+  const phone = str(body.phone, 'Telefoonka', 30, false);
+  assertPhoneFree(phone, null);
   const c = {
     id: uid(),
     name: str(body.name, 'Magaca', 80),
-    phone: str(body.phone, 'Telefoonka', 30, false),
+    phone,
     address: str(body.address, 'Cinwaanka', 160, false),
     type: custType(body.type),
     guarantor: guarantorOf(body.guarantor),
@@ -262,7 +301,11 @@ route('PUT', '/api/customers/:id', async ({ req, body, params }) => {
   requireAuth(req);
   const c = findById(db.customers, params.id, 'Macmiilka');
   if (body.name !== undefined) c.name = str(body.name, 'Magaca', 80);
-  if (body.phone !== undefined) c.phone = str(body.phone, 'Telefoonka', 30, false);
+  if (body.phone !== undefined) {
+    const phone = str(body.phone, 'Telefoonka', 30, false);
+    assertPhoneFree(phone, c.id);
+    c.phone = phone;
+  }
   if (body.address !== undefined) c.address = str(body.address, 'Cinwaanka', 160, false);
   if (body.type !== undefined) c.type = custType(body.type);
   if (body.guarantor !== undefined) c.guarantor = guarantorOf(body.guarantor);
@@ -369,6 +412,20 @@ route('POST', '/api/invoices', async ({ req, body }) => {
     return { itemId: item.id, name: item.name, unit: item.unit, qty, price, total: round2(qty * price) };
   });
 
+  // Wadarta alaabta (subtotal) + VAT oo boqolkiiba ku qoran settings-ka (tusaale: 100 + 5% = 105)
+  const subtotal = sum(lines.map(l => l.total));
+  const vatRate = Number(db.settings.vatRate) || 0;
+  const vat = round2(subtotal * vatRate / 100);
+  const total = round2(subtotal + vat);
+
+  // Macmiil cusub (invoice ugu horeeya) lacagta oo dhan hadda ayuu bixiyaa
+  const isNewCustomer = !db.invoices.some(i => i.customerId === customer.id);
+  const paidNow = optNum(body.paidNow, 'Lacagta la bixiyay', 0);
+  if (paidNow < 0 || paidNow > total) fail(400, 'Lacagta la bixiyay khalad ayay tahay');
+  if (isNewCustomer && paidNow < total) {
+    fail(400, 'Macmiil cusub waa in invoice-ka oo dhan hadda la bixiyo');
+  }
+
   // Stock-ka iska hubi (alaab isku mid ah oo lagu soo daray laba jeer ayaa lagu wada geeyaa)
   const need = {};
   lines.forEach(l => { need[l.itemId] = round2((need[l.itemId] || 0) + l.qty); });
@@ -388,10 +445,19 @@ route('POST', '/api/invoices', async ({ req, body }) => {
     customerId: customer.id,
     date,
     lines,
-    total: sum(lines.map(l => l.total)),
+    subtotal,
+    vatRate,
+    vat,
+    total,
     createdAt: nowIso()
   };
   db.invoices.push(inv);
+  if (paidNow > 0) {
+    db.payments.push({
+      id: uid(), invoiceId: inv.id, customerId: customer.id,
+      amount: paidNow, date, note: 'Markii invoice la sameeyay', createdAt: nowIso()
+    });
+  }
   return { status: 201, body: { invoice: invView(inv) } };
 });
 
@@ -667,7 +733,10 @@ function serveStatic(res, pathname) {
   catch { res.writeHead(400); return res.end('Bad request'); }
   const file = decoded === '/' ? '/index.html' : decoded;
   const full = path.normalize(path.join(PUBLIC_DIR, file));
-  if (!full.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end('Forbidden'); }
+  // Hubi in faylka uu ku jiro folder-ka public oo keliya (ma aha "public-xxx")
+  if (full !== PUBLIC_DIR && !full.startsWith(PUBLIC_DIR + path.sep)) {
+    res.writeHead(403); return res.end('Forbidden');
+  }
   fs.readFile(full, (err, buf) => {
     if (err) {
       return fs.readFile(path.join(PUBLIC_DIR, 'index.html'), (e2, html) => {
