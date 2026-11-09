@@ -92,12 +92,12 @@ function bindInvoiceLinks(root) {
 }
 
 // ---------- Modal ----------
-function openModal(html) {
+function openModal(html, cls = '') {
   closeModal();
   const o = document.createElement('div');
   o.id = 'modal';
   o.className = 'modal-overlay';
-  o.innerHTML = `<div class="modal">${html}</div>`;
+  o.innerHTML = `<div class="modal ${cls}">${html}</div>`;
   o.onclick = e => { if (e.target === o) closeModal(); };
   o.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModal);
   document.body.appendChild(o);
@@ -399,47 +399,68 @@ async function viewInvoices(el) {
   bindInvoiceLinks(el);
 }
 
+// Foomka invoice-ka: bidix foom, midig preview oo toos u beddela
 function openInvoiceForm(customers, items, settings) {
   const rate = Number(settings.vatRate) || 0;
   const o = openModal(`
-    <div class="modal-head"><h3>Invoice cusub</h3><button class="link" data-close>✕</button></div>
-    <form id="invForm" class="form inv-form">
-      <div class="form-section">
-        <span class="form-label">Macmiilka</span>
-        <input name="customerName" id="custName" list="custList" placeholder="Qor magaca macmiilka ama dooro" autocomplete="off" required>
-        <datalist id="custList">${customers.map(c => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>
-        <small id="custHint" class="muted"></small>
-      </div>
-      <div class="row">
+    <div class="modal-head"><h3>Create New Invoice</h3><button class="link" data-close>✕</button></div>
+    <div class="inv-builder">
+      <form id="invForm" class="inv-panel form">
+        <h4 class="panel-title">Invoice Details</h4>
+
         <div class="form-section">
-          <span class="form-label">Taariikh</span>
-          <input name="date" type="date" value="${todayStr()}" required>
+          <span class="form-label">Macmiilka *</span>
+          <input name="customerName" id="custName" list="custList" placeholder="Magaca macmiilka" autocomplete="off" required>
+          <datalist id="custList">${customers.map(c => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>
+          <small id="custHint" class="hint-line"></small>
         </div>
+
+        <div class="row">
+          <div class="form-section">
+            <span class="form-label">Taariikh *</span>
+            <input name="date" type="date" value="${todayStr()}" required>
+          </div>
+          <div class="form-section">
+            <span class="form-label">Hadda la bixiyay ($)</span>
+            <input name="paidNow" type="number" step="0.01" min="0" placeholder="0.00">
+          </div>
+        </div>
+        <small id="payNote" class="hint-line"></small>
+
         <div class="form-section">
-          <span class="form-label">Hadda la bixiyay ($)</span>
-          <input name="paidNow" type="number" step="0.01" min="0" placeholder="0.00">
+          <span class="form-label">Items Details *</span>
+          <div id="lines" class="form"></div>
+          <button type="button" class="btn ghost-dark small" id="addLine" style="justify-self:start">+ Add Item</button>
         </div>
+
+        <div class="inv-summary">
+          <div class="srow"><span>Subtotal</span><b id="sub">$0.00</b></div>
+          <div class="srow"><span>VAT (${rate}%)</span><b id="vat">$0.00</b></div>
+          <div class="srow grand"><span>Total</span><b id="grand">$0.00</b></div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn ghost-dark" data-close>Ka noqo</button>
+          <button class="btn primary">Send Invoice</button>
+        </div>
+      </form>
+
+      <div class="inv-panel">
+        <h4 class="panel-title">Preview</h4>
+        <div id="invPreview" class="inv-preview"></div>
       </div>
-      <div class="form-section">
-        <span class="form-label">Alaabta</span>
-        <div id="lines" class="form"></div>
-        <button type="button" class="btn ghost-dark small" id="addLine" style="justify-self:start">+ Alaab ku dar</button>
-      </div>
-      <div class="inv-summary">
-        <div class="srow"><span>Subtotal</span><b id="sub">$0.00</b></div>
-        <div class="srow"><span>VAT (${rate}%)</span><b id="vat">$0.00</b></div>
-        <div class="srow grand"><span>Wadar</span><b id="grand">$0.00</b></div>
-      </div>
-      <p class="muted" id="payNote"></p>
-      <button class="btn primary block">Samee invoice</button>
-    </form>`);
+    </div>`, 'wide');
 
   const linesEl = o.querySelector('#lines');
   const custInput = o.querySelector('#custName');
   const custHint = o.querySelector('#custHint');
+  const dateIn = o.querySelector('[name=date]');
   const paidIn = o.querySelector('[name=paidNow]');
   const payNote = o.querySelector('#payNote');
-  const itemOpts = items.map(i => `<option value="${i.id}" data-price="${i.price}">${esc(i.name)} (stock ${i.stock} ${esc(i.unit)})</option>`).join('');
+  const previewEl = o.querySelector('#invPreview');
+  const itemOpts = items.map(i =>
+    `<option value="${i.id}" data-price="${i.price}" data-name="${esc(i.name)}">${esc(i.name)} (stock ${i.stock} ${esc(i.unit)})</option>`
+  ).join('');
 
   // Magaca la qoray ayaa macmiil jira ah ka raadiya (lama kala sooci karo xarfaha weyn/yar)
   const findCust = name => {
@@ -459,7 +480,7 @@ function openInvoiceForm(customers, items, settings) {
       : 'Macmiil cusub — waa la diiwaangelinayaa.';
   };
 
-  paidIn.oninput = () => { paidIn.dataset.touched = '1'; };
+  paidIn.oninput = () => { paidIn.dataset.touched = '1'; recalc(); };
 
   const syncPay = () => {
     const total = Number(o.dataset.total) || 0;
@@ -469,27 +490,66 @@ function openInvoiceForm(customers, items, settings) {
     if (paidIn.dataset.touched !== '1') paidIn.value = isNew && total ? total.toFixed(2) : '';
   };
 
-  custInput.oninput = () => {
-    paidIn.dataset.touched = '';
-    updateHint();
-    syncPay();
+  // Preview-ka: wuxuu u eg yahay invoice-ka dhab ah, wuxuuna toos u beddelaa
+  const renderPreview = (lines, sub, vat, total) => {
+    const name = custInput.value.trim() || '—';
+    const paid = Math.min(Number(paidIn.value) || 0, total);
+    const rowsHtml = lines.length
+      ? lines.map(l => `<tr>
+          <td>${esc(l.name)}</td>
+          <td>${l.qty}</td>
+          <td class="r">${money(l.price)}</td>
+          <td class="r">${money(l.total)}</td></tr>`).join('')
+      : '<tr><td colspan="4" class="muted">Alaab ku dar</td></tr>';
+    previewEl.innerHTML = `
+      ${invHeadHtml(settings)}
+      <div class="inv-meta">
+        <div><small>Macmiilka</small><br><b>${esc(name)}</b></div>
+        <div class="r"><b>Invoice cusub</b><br><small>${esc(dateIn.value)}</small></div>
+      </div>
+      <table class="inv-table">
+        <thead><tr><th>Alaab</th><th>Tiro</th><th class="r">Qiime</th><th class="r">Wadar</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div class="inv-totals">
+        <div>Subtotal: <b>${money(sub)}</b></div>
+        <div>VAT (${rate}%): <b>${money(vat)}</b></div>
+        <div class="inv-grand">Wadar: <b>${money(total)}</b></div>
+        <div>La bixiyay: <b>${money(paid)}</b></div>
+        <div>Baaqi: <b>${money(total - paid)}</b></div>
+      </div>
+      ${invFootHtml(settings)}`;
   };
 
   const recalc = () => {
+    const lines = [];
     let g = 0;
     linesEl.querySelectorAll('.line-card').forEach(r => {
-      const t = (Number(r.querySelector('[name=qty]').value) || 0) * (Number(r.querySelector('[name=price]').value) || 0);
+      const q = Number(r.querySelector('[name=qty]').value) || 0;
+      const p = Number(r.querySelector('[name=price]').value) || 0;
+      const t = q * p;
       r.querySelector('.ltotal').textContent = money(t);
+      const opt = r.querySelector('select').selectedOptions[0];
+      lines.push({ name: opt ? opt.dataset.name : '', qty: q, price: p, total: t });
       g += t;
     });
     // VAT: g * rate / 100 (cents-ka oo la wareejiyay)
     const vat = Math.round(g * rate) / 100;
-    o.dataset.total = g + vat;
+    const total = g + vat;
+    o.dataset.total = total;
     o.querySelector('#sub').textContent = money(g);
     o.querySelector('#vat').textContent = money(vat);
-    o.querySelector('#grand').textContent = money(g + vat);
+    o.querySelector('#grand').textContent = money(total);
+    updateHint();
     syncPay();
+    renderPreview(lines, g, vat, total);
   };
+
+  custInput.oninput = () => {
+    paidIn.dataset.touched = '';
+    recalc();
+  };
+  dateIn.onchange = recalc;
 
   const addRow = () => {
     const row = document.createElement('div');
@@ -517,8 +577,6 @@ function openInvoiceForm(customers, items, settings) {
 
   o.querySelector('#addLine').onclick = addRow;
   addRow();
-  updateHint();
-  syncPay();
 
   o.querySelector('#invForm').onsubmit = e => {
     e.preventDefault();
@@ -616,7 +674,7 @@ async function openInvoice(id) {
     <h4 class="no-print" style="margin-top:6px">Lacag bixinta</h4>
     <div class="no-print">${inv.payments.length
       ? inv.payments.map(p => `<div class="list-row"><span>${esc(p.date)} ${esc(p.note)}</span><b class="good">${money(p.amount)}</b></div>`).join('')
-      : '<p class="muted">Weli lacag ma bixin.</p>'}</div>`);
+      : '<p class="muted">Weli lacag ma bixin.</p>'}</div>`, '');
 
   $('#printBtn').onclick = printInvoice;
   if ($('#payBtn')) $('#payBtn').onclick = () => openPaymentForm(inv.id);
