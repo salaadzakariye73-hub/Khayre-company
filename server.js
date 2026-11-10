@@ -307,6 +307,8 @@ route('PUT', '/api/customers/:id', async ({ req, body, params }) => {
     c.phone = phone;
   }
   if (body.address !== undefined) c.address = str(body.address, 'Cinwaanka', 160, false);
+  // Telefoon lagu diiwaangeliyay = macmiil rasmi ah, wuu deyn qaadan karaa
+  if (c.phone) c.isNew = false;
   if (body.type !== undefined) c.type = custType(body.type);
   if (body.guarantor !== undefined) c.guarantor = guarantorOf(body.guarantor);
   return { body: { customer: custView(c) } };
@@ -406,7 +408,7 @@ route('POST', '/api/invoices', async ({ req, body }) => {
     const name = str(body.customerName, 'Magaca macmiilka', 80);
     customer = db.customers.find(c => c.name.trim().toLowerCase() === name.toLowerCase());
     if (!customer) {
-      customer = { id: uid(), name, phone: '', address: '', type: 'macaamiil', guarantor: null, createdAt: nowIso() };
+      customer = { id: uid(), name, phone: '', address: '', type: 'macaamiil', guarantor: null, isNew: true, createdAt: nowIso() };
       db.customers.push(customer);
     }
   }
@@ -462,6 +464,13 @@ route('POST', '/api/invoices', async ({ req, body }) => {
     createdAt: nowIso()
   };
   db.invoices.push(inv);
+  // Macmiil cusub (telefoon aan lagu diiwaangelin) deyn ma qaadan karo: lacagta oo dhan hadda ayuu bixiyaa
+  if (customer.isNew) {
+    db.payments.push({
+      id: uid(), invoiceId: inv.id, customerId: customer.id,
+      amount: total, date, note: 'Macmiil cusub — lacag dhan', createdAt: nowIso()
+    });
+  }
   return { status: 201, body: { invoice: invView(inv) } };
 });
 
