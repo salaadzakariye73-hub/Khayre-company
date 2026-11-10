@@ -29,7 +29,7 @@ const INV_CSS = `
 .inv-table th{background:var(--accent);color:#fff;padding:8px;text-align:left;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .inv-table td{padding:8px;border-bottom:0}
 .inv-table tbody tr:nth-child(even) td{background:rgba(46,61,130,.07);-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.inv-totals{display:flex;justify-content:flex-end;gap:18px;flex-wrap:wrap;padding:14px 22px}
+.inv-totals{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding:14px 22px}
 .inv-foot{display:flex;justify-content:space-between;gap:20px;padding:14px 22px;white-space:pre-line}
 .inv-contact{background:var(--accent);color:#fff;padding:10px 22px;text-align:center;margin-top:18px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 `;
