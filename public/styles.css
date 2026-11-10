@@ -360,3 +360,20 @@ td.r, th.r { font-variant-numeric: tabular-nums; }
   .inv-head { flex-direction: column; align-items: flex-start; gap: 8px; }
   .inv-foot { flex-direction: column; }
 }
+
+/* ---------- Invoice form (naqshadda Create New Invoice) ---------- */
+.inv-page-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+.inv-page-head h2 { margin: 0; font-size: 24px; }
+.items-head, .item-row {
+  display: grid; grid-template-columns: 2fr .8fr 1fr 1fr auto; gap: 8px; align-items: center;
+}
+.items-head { font-size: 12px; color: var(--muted); font-weight: 700; padding: 0 4px; }
+.items-head .r { text-align: right; }
+.item-row { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+.item-row .ltotal { text-align: right; white-space: nowrap; }
+.item-row .danger { font-size: 16px; }
+@media (max-width: 900px) {
+  .items-head { display: none; }
+  .item-row { grid-template-columns: 1fr 1fr; }
+  .item-row select { grid-column: 1 / -1; }
+}
