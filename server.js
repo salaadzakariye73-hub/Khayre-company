@@ -430,12 +430,6 @@ route('POST', '/api/invoices', async ({ req, body }) => {
   const total = round2(subtotal + vat);
 
   // Macmiil cusub (invoice ugu horeeya) lacagta oo dhan hadda ayuu bixiyaa
-  const isNewCustomer = !db.invoices.some(i => i.customerId === customer.id);
-  const paidNow = optNum(body.paidNow, 'Lacagta la bixiyay', 0);
-  if (paidNow < 0 || paidNow > total) fail(400, 'Lacagta la bixiyay khalad ayay tahay');
-  if (isNewCustomer && paidNow < total) {
-    fail(400, 'Macmiil cusub waa in invoice-ka oo dhan hadda la bixiyo');
-  }
 
   // Stock-ka iska hubi (alaab isku mid ah oo lagu soo daray laba jeer ayaa lagu wada geeyaa)
   const need = {};
@@ -463,12 +457,6 @@ route('POST', '/api/invoices', async ({ req, body }) => {
     createdAt: nowIso()
   };
   db.invoices.push(inv);
-  if (paidNow > 0) {
-    db.payments.push({
-      id: uid(), invoiceId: inv.id, customerId: customer.id,
-      amount: paidNow, date, note: 'Markii invoice la sameeyay', createdAt: nowIso()
-    });
-  }
   return { status: 201, body: { invoice: invView(inv) } };
 });
 
