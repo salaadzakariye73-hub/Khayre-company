@@ -413,14 +413,19 @@ route('POST', '/api/invoices', async ({ req, body }) => {
   if (!Array.isArray(body.lines) || !body.lines.length) fail(400, 'Ugu yaraan hal alaab ku dar');
 
   const lines = body.lines.map(l => {
-    const item = findById(db.items, l.itemId, 'Alaabta');
+    const typed = str(l.itemName, 'Magaca alaabta', 100, false);
+    const item = l.itemId
+      ? findById(db.items, l.itemId, 'Alaabta')
+      : db.items.find(i => i.name.trim().toLowerCase() === typed.toLowerCase()) || null;
+    const name = item ? item.name : typed;
+    if (!name) fail(400, 'Magaca alaabta waa lagama maarmaan');
     const qty = num(l.qty, 'Tirada');
     if (qty <= 0) fail(400, 'Tirada waa inay ka weyn tahay 0');
     const price = (l.price === '' || l.price === undefined || l.price === null)
-      ? item.price
+      ? (item ? item.price : fail(400, 'Qiimaha alaabta cusub waa lagama maarmaan'))
       : num(l.price, 'Qiimaha');
     if (price < 0) fail(400, 'Qiimuhu ma noqon karo mid taban');
-    return { itemId: item.id, name: item.name, unit: item.unit, qty, price, total: round2(qty * price) };
+    return { itemId: item ? item.id : null, name, unit: item ? item.unit : 'pcs', qty, price, total: round2(qty * price) };
   });
 
   // Wadarta alaabta (subtotal) + VAT oo boqolkiiba ku qoran settings-ka (tusaale: 100 + 5% = 105)
@@ -433,7 +438,7 @@ route('POST', '/api/invoices', async ({ req, body }) => {
 
   // Stock-ka iska hubi (alaab isku mid ah oo lagu soo daray laba jeer ayaa lagu wada geeyaa)
   const need = {};
-  lines.forEach(l => { need[l.itemId] = round2((need[l.itemId] || 0) + l.qty); });
+  lines.filter(l => l.itemId).forEach(l => { need[l.itemId] = round2((need[l.itemId] || 0) + l.qty); });
   for (const [id, q] of Object.entries(need)) {
     const it = db.items.find(i => i.id === id);
     if (it.stock < q) fail(400, `Stock-ka "${it.name}" ma filna (waxa jira ${it.stock} ${it.unit})`);
