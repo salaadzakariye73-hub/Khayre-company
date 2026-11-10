@@ -399,36 +399,43 @@ async function viewInvoices(el) {
   bindInvoiceLinks(el);
 }
 
-// Foomka invoice-ka: bidix foom, midig preview oo toos u beddela
+// Foomka invoice-ka: sida naqshadda "Create New Invoice" — bidix foom, midig preview
 function openInvoiceForm(customers, items, settings) {
   const rate = Number(settings.vatRate) || 0;
+  const itemOpts = items.map(i =>
+    `<option value="${i.id}" data-price="${i.price}" data-name="${esc(i.name)}">${esc(i.name)} (stock ${i.stock} ${esc(i.unit)})</option>`
+  ).join('');
+
   const o = openModal(`
-    <div class="modal-head"><h3>Create New Invoice</h3><button class="link" data-close>✕</button></div>
+    <div class="inv-page-head">
+      <button type="button" class="link" data-close>← Back</button>
+      <h2>Create New Invoice</h2>
+      <button type="button" class="link" data-close>✕</button>
+    </div>
     <div class="inv-builder">
       <form id="invForm" class="inv-panel form">
         <h4 class="panel-title">Invoice Details</h4>
 
         <div class="form-section">
-          <span class="form-label">Macmiilka *</span>
-          <input name="customerName" id="custName" list="custList" placeholder="Magaca macmiilka" autocomplete="off" required>
+          <span class="form-label">Customer *</span>
+          <input name="customerName" id="custName" list="custList" placeholder="Qor ama dooro magaca macmiilka" autocomplete="off" required>
           <datalist id="custList">${customers.map(c => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>
           <small id="custHint" class="hint-line"></small>
         </div>
 
-        <div class="row">
-          <div class="form-section">
-            <span class="form-label">Taariikh *</span>
-            <input name="date" type="date" value="${todayStr()}" required>
-          </div>
-          <div class="form-section">
-            <span class="form-label">Hadda la bixiyay ($)</span>
-            <input name="paidNow" type="number" step="0.01" min="0" placeholder="0.00">
-          </div>
+        <div class="form-section">
+          <span class="form-label">Billing Address</span>
+          <input id="billAddr" readonly placeholder="Cinwaanka macmiilka (macmiil jira)">
         </div>
-        <small id="payNote" class="hint-line"></small>
+
+        <div class="form-section">
+          <span class="form-label">Issue Date *</span>
+          <input name="date" id="dateIn" type="date" value="${todayStr()}" required>
+        </div>
 
         <div class="form-section">
           <span class="form-label">Items Details *</span>
+          <div class="items-head"><span>Item</span><span>Qty</span><span>Cost ($)</span><span class="r">Amount</span><span></span></div>
           <div id="lines" class="form"></div>
           <button type="button" class="btn ghost-dark small" id="addLine" style="justify-self:start">+ Add Item</button>
         </div>
@@ -439,10 +446,7 @@ function openInvoiceForm(customers, items, settings) {
           <div class="srow grand"><span>Total</span><b id="grand">$0.00</b></div>
         </div>
 
-        <div class="form-actions">
-          <button type="button" class="btn ghost-dark" data-close>Ka noqo</button>
-          <button class="btn primary">Send Invoice</button>
-        </div>
+        <button class="btn primary block">Send Invoice</button>
       </form>
 
       <div class="inv-panel">
@@ -454,46 +458,28 @@ function openInvoiceForm(customers, items, settings) {
   const linesEl = o.querySelector('#lines');
   const custInput = o.querySelector('#custName');
   const custHint = o.querySelector('#custHint');
-  const dateIn = o.querySelector('[name=date]');
-  const paidIn = o.querySelector('[name=paidNow]');
-  const payNote = o.querySelector('#payNote');
+  const billAddr = o.querySelector('#billAddr');
+  const dateIn = o.querySelector('#dateIn');
   const previewEl = o.querySelector('#invPreview');
-  const itemOpts = items.map(i =>
-    `<option value="${i.id}" data-price="${i.price}" data-name="${esc(i.name)}">${esc(i.name)} (stock ${i.stock} ${esc(i.unit)})</option>`
-  ).join('');
 
-  // Magaca la qoray ayaa macmiil jira ah ka raadiya (lama kala sooci karo xarfaha weyn/yar)
+  // Magaca la qoray ayaa macmiil jira ah ka raadiya (xarfaha weyn/yar ma kala sooci karo)
   const findCust = name => {
     const n = String(name || '').trim().toLowerCase();
     return n ? customers.find(c => c.name.trim().toLowerCase() === n) : undefined;
   };
-  // Macmiil cusub, ama macmiil jira oo invoice ugu horeeya ah: lacagta oo dhan hadda ayuu bixiyaa
-  const isNewCust = () => {
-    const c = findCust(custInput.value);
-    return !c || c.invoices === 0;
-  };
-  const updateHint = () => {
+
+  const updateCust = () => {
     const name = custInput.value.trim();
     const c = findCust(name);
+    billAddr.value = c ? (c.address || '') : '';
     custHint.textContent = !name ? '' : c
       ? `Macmiil jira · Baaqi: ${money(c.balance)} · Akoon: ${money(c.akoon)}`
       : 'Macmiil cusub — waa la diiwaangelinayaa.';
   };
 
-  paidIn.oninput = () => { paidIn.dataset.touched = '1'; recalc(); };
-
-  const syncPay = () => {
-    const total = Number(o.dataset.total) || 0;
-    const isNew = isNewCust();
-    paidIn.required = isNew;
-    payNote.textContent = isNew ? 'Macmiil cusub ama invoice ugu horeeya: lacagta oo dhan hadda ayuu bixiyaa.' : '';
-    if (paidIn.dataset.touched !== '1') paidIn.value = isNew && total ? total.toFixed(2) : '';
-  };
-
   // Preview-ka: wuxuu u eg yahay invoice-ka dhab ah, wuxuuna toos u beddelaa
   const renderPreview = (lines, sub, vat, total) => {
     const name = custInput.value.trim() || '—';
-    const paid = Math.min(Number(paidIn.value) || 0, total);
     const rowsHtml = lines.length
       ? lines.map(l => `<tr>
           <td>${esc(l.name)}</td>
@@ -515,8 +501,6 @@ function openInvoiceForm(customers, items, settings) {
         <div>Subtotal: <b>${money(sub)}</b></div>
         <div>VAT (${rate}%): <b>${money(vat)}</b></div>
         <div class="inv-grand">Wadar: <b>${money(total)}</b></div>
-        <div>La bixiyay: <b>${money(paid)}</b></div>
-        <div>Baaqi: <b>${money(total - paid)}</b></div>
       </div>
       ${invFootHtml(settings)}`;
   };
@@ -524,7 +508,7 @@ function openInvoiceForm(customers, items, settings) {
   const recalc = () => {
     const lines = [];
     let g = 0;
-    linesEl.querySelectorAll('.line-card').forEach(r => {
+    linesEl.querySelectorAll('.item-row').forEach(r => {
       const q = Number(r.querySelector('[name=qty]').value) || 0;
       const p = Number(r.querySelector('[name=price]').value) || 0;
       const t = q * p;
@@ -536,34 +520,25 @@ function openInvoiceForm(customers, items, settings) {
     // VAT: g * rate / 100 (cents-ka oo la wareejiyay)
     const vat = Math.round(g * rate) / 100;
     const total = g + vat;
-    o.dataset.total = total;
     o.querySelector('#sub').textContent = money(g);
     o.querySelector('#vat').textContent = money(vat);
     o.querySelector('#grand').textContent = money(total);
-    updateHint();
-    syncPay();
+    updateCust();
     renderPreview(lines, g, vat, total);
   };
 
-  custInput.oninput = () => {
-    paidIn.dataset.touched = '';
-    recalc();
-  };
+  custInput.oninput = recalc;
   dateIn.onchange = recalc;
 
   const addRow = () => {
     const row = document.createElement('div');
-    row.className = 'line-card';
+    row.className = 'item-row';
     row.innerHTML = `
       <select name="itemId">${itemOpts}</select>
-      <div class="line-nums">
-        <label>Tiro<input name="qty" type="number" step="0.01" min="0.01" value="1" required></label>
-        <label>Qiime ($)<input name="price" type="number" step="0.01" min="0" required></label>
-      </div>
-      <div class="line-foot">
-        <b class="ltotal">$0.00</b>
-        <button type="button" class="link danger">Ka saar</button>
-      </div>`;
+      <input name="qty" type="number" step="0.01" min="0.01" value="1" required>
+      <input name="price" type="number" step="0.01" min="0" required>
+      <b class="ltotal">$0.00</b>
+      <button type="button" class="link danger" title="Tirtir">🗑</button>`;
     const sel = row.querySelector('select');
     const price = row.querySelector('[name=price]');
     const setPrice = () => { price.value = sel.selectedOptions[0].dataset.price; recalc(); };
@@ -581,7 +556,7 @@ function openInvoiceForm(customers, items, settings) {
   o.querySelector('#invForm').onsubmit = e => {
     e.preventDefault();
     const fd = formData(e.target);
-    const lines = [...linesEl.querySelectorAll('.line-card')].map(r => ({
+    const lines = [...linesEl.querySelectorAll('.item-row')].map(r => ({
       itemId: r.querySelector('select').value,
       qty: r.querySelector('[name=qty]').value,
       price: r.querySelector('[name=price]').value
@@ -591,8 +566,7 @@ function openInvoiceForm(customers, items, settings) {
       customerId: c ? c.id : '',
       customerName: fd.customerName.trim(),
       date: fd.date,
-      lines,
-      paidNow: fd.paidNow || 0
+      lines
     }), 'Invoice waa la sameeyay');
   };
 }
@@ -661,15 +635,8 @@ async function openInvoice(id) {
         <div>Subtotal: <b>${money(inv.subtotal ?? inv.total)}</b></div>
         <div>VAT (${inv.vatRate ?? 0}%): <b>${money(inv.vat ?? 0)}</b></div>
         <div>Wadar: <b>${money(inv.total)}</b></div>
-        <div>La bixiyay: <b>${money(inv.paid)}</b></div>
-        <div>Baaqi: <b>${money(inv.remaining)}</b></div>
       </div>
       ${invFootHtml(s)}
-    </div>
-    <div class="inv-customer no-print">
-      <div><small>Macmiilka</small><b>${esc(inv.customerName)}</b></div>
-      <div class="r"><small>La bixiyay</small><b class="good">${money(inv.paid)}</b></div>
-      <div class="r"><small>Baaqi</small><b class="${inv.remaining > 0 ? 'bad' : 'good'}">${money(inv.remaining)}</b></div>
     </div>
     <h4 class="no-print" style="margin-top:6px">Lacag bixinta</h4>
     <div class="no-print">${inv.payments.length
