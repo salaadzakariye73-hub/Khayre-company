@@ -627,7 +627,7 @@ async function openInvoice(id) {
         <thead><tr><th>Alaab</th><th>Tiro</th><th class="r">Qiime</th><th class="r">Wadar</th></tr></thead>
         <tbody>${inv.lines.map(l => `<tr>
           <td>${esc(l.name)}</td>
-          <td>${l.qty} ${esc(l.unit)}</td>
+          <td>${l.qty}</td>
           <td class="r">${money(l.price)}</td>
           <td class="r">${money(l.total)}</td></tr>`).join('')}</tbody>
       </table>
