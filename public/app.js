@@ -402,9 +402,7 @@ async function viewInvoices(el) {
 // Foomka invoice-ka: sida naqshadda "Create New Invoice" — bidix foom, midig preview
 function openInvoiceForm(customers, items, settings) {
   const rate = Number(settings.vatRate) || 0;
-  const itemOpts = items.map(i =>
-    `<option value="${i.id}" data-price="${i.price}" data-name="${esc(i.name)}">${esc(i.name)} (stock ${i.stock} ${esc(i.unit)})</option>`
-  ).join('');
+  const itemList = items.map(i => `<option value="${esc(i.name)}"></option>`).join('');
 
   const o = openModal(`
     <div class="inv-page-head">
@@ -436,6 +434,7 @@ function openInvoiceForm(customers, items, settings) {
         <div class="form-section">
           <span class="form-label">Items Details *</span>
           <div class="items-head"><span>Item</span><span>Qty</span><span>Cost ($)</span><span class="r">Amount</span><span></span></div>
+          <datalist id="itemList">${itemList}</datalist>
           <div id="lines" class="form"></div>
           <button type="button" class="btn ghost-dark small" id="addLine" style="justify-self:start">+ Add Item</button>
         </div>
@@ -466,6 +465,12 @@ function openInvoiceForm(customers, items, settings) {
   const findCust = name => {
     const n = String(name || '').trim().toLowerCase();
     return n ? customers.find(c => c.name.trim().toLowerCase() === n) : undefined;
+  };
+
+  // Alaabta magaceeda la qoray: haddii ay hore u jirto, qiimaha iyo stock-ka ayaa la isticmaalaa
+  const findItem = name => {
+    const n = String(name || '').trim().toLowerCase();
+    return n ? items.find(i => i.name.trim().toLowerCase() === n) : undefined;
   };
 
   const updateCust = () => {
@@ -513,8 +518,7 @@ function openInvoiceForm(customers, items, settings) {
       const p = Number(r.querySelector('[name=price]').value) || 0;
       const t = q * p;
       r.querySelector('.ltotal').textContent = money(t);
-      const opt = r.querySelector('select').selectedOptions[0];
-      lines.push({ name: opt ? opt.dataset.name : '', qty: q, price: p, total: t });
+      lines.push({ name: r.querySelector('[name=itemName]').value.trim(), qty: q, price: p, total: t });
       g += t;
     });
     // VAT: g * rate / 100 (cents-ka oo la wareejiyay)
@@ -534,20 +538,24 @@ function openInvoiceForm(customers, items, settings) {
     const row = document.createElement('div');
     row.className = 'item-row';
     row.innerHTML = `
-      <select name="itemId">${itemOpts}</select>
+      <input name="itemName" list="itemList" placeholder="Magaca alaabta" autocomplete="off" required>
       <input name="qty" type="number" step="0.01" min="0.01" value="1" required>
       <input name="price" type="number" step="0.01" min="0" required>
       <b class="ltotal">$0.00</b>
       <button type="button" class="link danger" title="Tirtir">🗑</button>`;
-    const sel = row.querySelector('select');
+    const nameIn = row.querySelector('[name=itemName]');
     const price = row.querySelector('[name=price]');
-    const setPrice = () => { price.value = sel.selectedOptions[0].dataset.price; recalc(); };
-    sel.onchange = setPrice;
+    const onName = () => {
+      const it = findItem(nameIn.value);
+      if (it && price.dataset.touched !== '1') price.value = it.price;
+      recalc();
+    };
+    nameIn.oninput = onName;
+    nameIn.onchange = onName;
     row.querySelector('[name=qty]').oninput = recalc;
-    price.oninput = recalc;
+    price.oninput = () => { price.dataset.touched = '1'; recalc(); };
     row.querySelector('.danger').onclick = () => { row.remove(); recalc(); };
     linesEl.appendChild(row);
-    setPrice();
   };
 
   o.querySelector('#addLine').onclick = addRow;
@@ -557,7 +565,7 @@ function openInvoiceForm(customers, items, settings) {
     e.preventDefault();
     const fd = formData(e.target);
     const lines = [...linesEl.querySelectorAll('.item-row')].map(r => ({
-      itemId: r.querySelector('select').value,
+      itemName: r.querySelector('[name=itemName]').value,
       qty: r.querySelector('[name=qty]').value,
       price: r.querySelector('[name=price]').value
     }));
