@@ -479,7 +479,7 @@ function openInvoiceForm(customers, items, settings) {
     billAddr.value = c ? (c.address || '') : '';
     custHint.textContent = !name ? '' : c
       ? `Macmiil jira · Baaqi: ${money(c.balance)} · Akoon: ${money(c.akoon)}`
-      : 'Macmiil cusub — waa la diiwaangelinayaa.';
+      : 'Macmiil cusub — lacagta oo dhan hadda ayuu bixiyaa. Deyn ma qaadan karo ilaa telefoon lagu diiwaangeliyo.';
   };
 
   // Preview-ka: wuxuu u eg yahay invoice-ka dhab ah, wuxuuna toos u beddelaa
